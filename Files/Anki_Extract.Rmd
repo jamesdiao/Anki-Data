@@ -1,0 +1,386 @@
+---
+title: "Anki DB Extract and Analysis"
+author: "James Diao"
+date: "08 April 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.height = 4.3)
+require(rjson)
+require(RSQLite)
+require(DBI)
+require(dplyr)
+require(anytime)
+require(sqldf)
+require(ggplot2)
+require(tidyr)
+require(treemap)
+#COLLECTION_PATH <- "/Users/jamesdiao/Library/Application Support/Anki2/HMS-S2/collection.anki2"
+#COLLECTION_PATH <- "/Users/jamesdiao/Documents/R/Anki-Data/WFC/collection.anki2"
+RM_DECKS <- NULL
+```
+
+
+```{r}
+### Connect to the database and extract review information from `revlog`
+con <- dbConnect(RSQLite::SQLite(), dbname=COLLECTION_PATH)
+rev <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS id, CAST(cid AS TEXT) AS cid,
+                  time, type, ease, factor, lastivl FROM revlog')
+cards <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS cid, 
+                         CAST(did AS TEXT) AS did,
+                         reps
+                         FROM cards')
+```
+
+
+```{r}
+### Extract deck and card info; merge into `rev_w_decks_unique` and extract card counts
+deckinfo <- as.character(dbGetQuery(con,'SELECT decks FROM col'))
+decks <- fromJSON(deckinfo)
+decks <- data.frame(did = names(decks), 
+                    name = sapply(decks, function(d) d$name) %>% setNames(NULL), 
+                    stringsAsFactors = FALSE
+)
+cards_w_decks <- merge(cards,decks,by="did")
+```
+
+
+```{r}
+#Date is UNIX timestamp in milliseconds, divide by 1000 to get seconds
+rev$revdate <- anydate(as.numeric(rev$id)/1000)
+# Assign deck info to reviews
+rev_w_decks <- merge(rev, cards_w_decks, by="cid")
+
+keep <- TRUE
+if (!is.null(RM_DECKS)) {
+  keep <- sapply(rev_w_decks$name, function(n){
+    !any(sapply(RM_DECKS, function(x) grepl(x, n)))
+  }) %>% setNames(NULL)
+}
+rev_w_decks <- rev_w_decks %>% filter(keep)
+
+rev_w_decks_unique <- rev_w_decks[!duplicated(
+  paste(rev_w_decks$cid, rev_w_decks$type, rev_w_decks$revdate)),]
+
+all_summary <- sqldf("SELECT revdate AS Date, 
+                     COUNT(*) AS Count, 
+                     SUM(time) AS Time,
+                     type 
+                     FROM rev_w_decks_unique 
+                     GROUP BY revdate, type") %>% 
+                  mutate(Date = anydate(Date), 
+                         Time = Time/60000)
+time_summary <- sqldf("SELECT revdate AS Date, 
+                     COUNT(*) AS Count, 
+                     SUM(time) AS Time,
+                     type 
+                     FROM rev_w_decks 
+                     GROUP BY revdate, type") %>% 
+                  mutate(Date = anydate(Date), 
+                         Time = Time/60000)
+error_summary <- sqldf("SELECT revdate AS Date, 
+                       COUNT(*) AS Count 
+                       FROM rev_w_decks 
+                       WHERE ease==1 AND type==1 
+                       GROUP BY revdate") %>% 
+                  mutate(Date = anydate(Date))
+```
+
+## Compute summary statistics
+```{r}
+new_summary <- all_summary %>% filter(type==0) %>% select(Date, Count) 
+rev_summary <- all_summary %>% filter(type==1) %>% select(Date, Count)
+
+
+new_time <- time_summary %>% filter(type==0) %>% select(Date, Time, Count)
+rev_time <- time_summary %>% filter(type==1) %>% select(Date, Time, Count)
+time_summary <- merge(new_time, rev_time, by="Date", all = TRUE) 
+time_summary[, 2:ncol(time_summary)] <- apply(time_summary[, 2:ncol(time_summary)], 2, 
+                                              function(col) {
+                                                if (class(col)=="numeric") replace(col, is.na(col), 0) 
+                                                else col
+                                              })
+colnames(time_summary) <- c("Date","New_Time","New_Count","Review_Time","Review_Count")
+
+rev_map <- rev_summary$Count %>% setNames(rev_summary$Date)
+error_rates <- error_summary$Count/rev_map[as.character(error_summary$Date)]
+avg_error <- sum(error_summary$Count)/sum(rev_map[as.character(error_summary$Date)])
+
+avg_new <- new_summary$Count %>% mean
+new_min_per_card <- sum(new_time$Time)/sum(new_time$Count)
+avg_rev <- rev_summary$Count %>% mean
+rev_min_per_card <- sum(rev_time$Time)/sum(rev_time$Count)
+avg_int <- mean((rev$factor[rev$factor > 0]))/1000
+new_int <- avg_int*log(0.9)/log(1-max(avg_error,0.01))
+```
+
+- Average news/day: `r round(avg_new, 1)` (includes cards that were deleted later)
+- Average reviews/day: `r round(avg_rev, 1)`
+- Average errors/review: `r signif(100*avg_error, 2)`%
+- Average interval multiplier: `r round(avg_int, 2)`x
+- Studied cards: `r sum(new_summary$Count)`
+- Total cards: `r nrow(cards)`
+- Estimated days to completion: `r ceiling(nrow(cards)/avg_new)-nrow(new_summary)`
+- Estimated completion date: `r ceiling(nrow(cards)/avg_new)-nrow(new_summary)+Sys.Date()`
+- Suggested new interval (explanation below): `r round(new_int,2)`
+
+Anki suggests targeting a 10% error rate (90% retention) using the following equation: 
+
+$$ \text{Optimal interval} = (\text{Current interval}) \left( \frac{ \log (\text{desired retention \%}) }{\log (\text{current retention \%})} \right) $$
+
+Using the values from above, we get: 
+$$ \text{Optimal interval} = (`r round(avg_int, 2)`)\left( \frac{ \log (\text{0.900}) }{\log (\text{`r round(1-max(avg_error,0.01),3)`})} \right) = `r round(new_int,2)` $$
+
+\newpage 
+
+```{r all_treemap}
+
+decks$category <- gsub(":+.*$","",decks$name) %>% trimws
+decks$subcategory <- sub(":+",";;",decks$name)
+decks$subcategory <- sub(".*;;","",decks$subcategory)
+decks$subcategory <- gsub(":.*$","",decks$subcategory) %>% trimws
+ 
+cards_w_categories <- merge(cards,decks,by="did") 
+
+keep <- TRUE
+if (!is.null(RM_DECKS)) {
+  keep <- sapply(cards_w_categories$name, function(n){
+    !any(sapply(RM_DECKS, function(x) grepl(x, n)))
+  }) %>% setNames(NULL)
+}
+cards_w_categories <- cards_w_categories %>% filter(keep)
+
+all_deck_summary <- sqldf("SELECT category, subcategory, count(*) AS n_cards 
+                      FROM cards_w_categories 
+                      GROUP BY category, subcategory")
+treemap(all_deck_summary,
+        index=c("category","subcategory"),
+        vSize="n_cards",
+        type="index",
+        palette = "Set2",
+        title="Card Distribution by CATEGORY")
+```
+
+  
+  
+
+```{r learned_treemap}
+learned_deck_summary <- sqldf("SELECT category, subcategory, count(*) AS n_cards 
+                      FROM cards_w_categories 
+                      WHERE reps > 0
+                      GROUP BY category, subcategory")
+learned_deck_summary <- rbind(learned_deck_summary, 
+                              data.frame(category="Unlearned", 
+                                         subcategory="Unlearned", 
+                                         n_cards = nrow(cards) - sum(learned_deck_summary$n_cards)
+                                        )
+                              )
+treemap(learned_deck_summary,
+        index=c("category","subcategory"),
+        vSize="n_cards",
+        type="index",
+        palette = "Set2",
+        title="Card Distribution by LEARNED/UNLEARNED")
+```
+
+## Reviews counts 
+```{r}
+#tsData <- rev_summary$Count %>% ts(frequency = 7)
+#decompose(tsData, type="additive") %>% plot
+
+ggplot(new_summary,aes(x=Date,y=Count)) + 
+  geom_bar(stat="identity",fill="darkblue") +
+  ggtitle("New Cards Over Time") +
+  xlab("Date") +
+  ylab("New Cards") +
+  geom_hline(yintercept = avg_new, lty = 2)
+
+ggplot(rev_summary,aes(x=Date,y=Count)) + 
+  geom_bar(stat="identity",fill="darkblue") +
+  #geom_smooth(method='auto') + 
+  ggtitle("Review Cards Over Time") +
+  xlab("Date") +
+  ylab("Review Cards") +
+  geom_hline(yintercept = avg_rev, lty = 2)
+
+```
+
+## Time Commitment
+```{r}
+#tsData <- rev_summary$Count %>% ts(frequency = 7)
+#decompose(tsData, type="additive") %>% plot
+
+ggplot(new_time,aes(x=Date,y=Time)) + 
+  geom_bar(stat="identity",fill="darkblue") +
+  ggtitle("Time Spent on New Cards Over Time") +
+  xlab("Date") +
+  ylab("Time (min)") +
+  geom_hline(yintercept = mean(new_time$Time), lty = 2)
+
+ggplot(rev_time,aes(x=Date,y=Time)) + 
+  geom_bar(stat="identity",fill="darkblue") +
+  #geom_smooth(method='auto') + 
+  ggtitle("Time Spent on Review Cards Over Time") +
+  xlab("Date") +
+  ylab("Time (min)") +
+  geom_hline(yintercept = mean(rev_time$Time), lty = 2)
+
+```
+
+```{r}
+### Disconnect from database connection
+dbDisconnect(con)
+```
+
+## Simulation Forecasting
+```{r init}
+  multiplier <- avg_int
+  cardsperday <- avg_new
+  cutoff <- nrow(cards)
+  days <- cutoff/cardsperday
+  rlen <- 2*days
+  forget <- avg_error
+  
+terminal_interval <- 9999
+added_terms = 0
+max_pwr <- floor(log(terminal_interval, base = multiplier))
+intervals <- ceiling(multiplier^(0:max_pwr)) #c(1, 3, 7, 16, 40, 98)
+if (rlen > terminal_interval) 
+  added_terms <- floor((rlen-sum(intervals))/terminal_interval)
+# Cumulative sum of interval gaps (1, 4, 11, ...)
+csintervals <- c(intervals, rep(terminal_interval, added_terms)) %>% cumsum
+# Add even-odd jitter to the cumulative interval after some number (keep)
+# to stabilize stacking effects
+keep <- 5
+n_csint <- length(csintervals)
+csintervals[keep:n_csint] <- csintervals[keep:n_csint] + 
+                             rep(c(0,1),length.out=n_csint-keep+1)
+# Scaling factor for adds
+scaling <- 1 # 1+ forget*(sum(days > csintervals)-2)
+# Power series of the forget decay factor (e.g., 1.0, 0.90, 0.81, ...)
+decay_0 <- (1-forget)^(0:length(csintervals))
+
+# Empty vector for number of reviews
+reviews <- rep(0, rlen)
+
+for (i in 1:days) {
+  # `range` defines the index of consistently correct cards (2, 5, 12, ...)
+  range <- i + csintervals
+  # Make sure `range` fits inside the `reviews` vector
+  range <- range[range <= rlen]
+  # Make sure `decay` is the same size as `range`
+  decay <- (1-forget)^(0:(length(range)-1))
+  # Add reviews from "perfectly correct" cards initially added on day `i`
+  # graded_scaling <- (1-(days-cut_csint[i]) / days) * (scaling-1) + 1
+  reviews[range] <- reviews[range] + cardsperday * decay * scaling
+  # For each added day (j), add back the series of incorrect cards. 
+  # Assume that none of them are wrong more than twice.
+  
+  for (j in 1:(length(range))) {
+    # `j_range` is the indexes of the series of incorrect cards to add back for each `j`
+    j_range <- range - 1 + range[j]
+    # Make sure `j_range` fits into the `reviews` vector
+    j_range <- j_range[j_range <= rlen]
+    if (length(j_range) == 0) break
+    # Make sure `decay` is the same size as `range`
+    j_decay <- (1-forget)^((j-1):(length(j_range)+j-2))
+    # Add back the series of incorrect cards (2nd term = # of incorrect cards). 
+    reviews[j_range] <- reviews[j_range] + forget*cardsperday*j_decay*scaling 
+  }
+  
+}
+```
+
+```{r Analysis}
+#detrend_days <- (days*2.1):length(reviews)
+#if (length(detrend_days) > 300) {
+#  detrend <- lm(reviews[detrend_days] ~ detrend_days) %>% coef
+#  reviews[detrend_days] <- reviews[detrend_days] - detrend[2]*detrend_days
+#}
+
+# Round review counts to integers
+reviews <- reviews %>% round(0)
+# Two-part smoothing process to simulate load balancing
+review_data <- data.frame(Day = 1:length(reviews), estimated = reviews)
+smoothed_1 <- reviews[1:4]
+smoothed_2 <- predict(loess(estimated ~ Day, 
+                      data = review_data[5:nrow(review_data),], 
+                      span = 0.1))
+smoothed <- c(smoothed_1, smoothed_2)
+```
+
+
+Model generated for empirical values: `r sprintf("New cards/day = %s, total cards = %s, error rate = %s", round(cardsperday,1), cutoff, signif(forget,2))` 
+
+```{r ReviewsPlot, fig.height=4}
+# Final data frame
+obs <- rev_summary$Count
+obs_data <- data.frame(Day = 1:length(obs), estimated = obs)
+obs_smoothed <- predict(loess(estimated ~ Day, span = 0.5, data = obs_data))
+
+f <- function(x) {
+  sum((smoothed[1:nrow(rev_summary)]*x - obs_smoothed)^2)
+}
+rescale <- optimize(f=f, interval = c(0,2))$minimum
+
+all_data <- data.frame(rescale*review_data, 
+                       #smoothed = rescale*smoothed,
+                       observed = obs_smoothed[1:nrow(review_data)])
+
+plotdata <- all_data %>% gather(key = "Type", value = "Reviews", -Day) 
+ggplot(plotdata, aes(x=Day, y=Reviews, color=Type)) + 
+  geom_line(lwd = 0.8) + ggtitle("Review Counts Over Time") + theme_bw()
+```
+
+Observed counts smoothed using span=0.5; model estimates scaled by `r round(rescale,2)`x.  
+
+```{r TimePlot, fig.height=4}
+obs_time <- time_summary$New_Time + time_summary$Review_Time
+obs_time_data <- data.frame(Day = 1:length(obs_time), estimated = obs_time)
+obs_time_smoothed <- predict(loess(estimated ~ Day, span = 0.5, data = obs_time_data))
+
+smoothed_time <- review_data*rev_min_per_card+cardsperday*new_min_per_card
+f <- function(x) {
+  sum((smoothed_time[1:nrow(time_summary), "estimated"]*x - obs_time_smoothed)^2)
+}
+rescale <- optimize(f=f, interval = c(0,2))$minimum
+
+
+time_data <- data.frame(rescale*(review_data*rev_min_per_card+cardsperday*new_min_per_card), 
+                        #smoothed = rescale*smoothed,
+                        observed = obs_time_smoothed[1:nrow(review_data)])
+
+plotdata <- time_data %>% gather(key = "Type", value = "Time", -Day) 
+ggplot(plotdata, aes(x=Day, y=Time, color=Type)) + 
+  geom_line(lwd = 0.8) + ylab("Time (min)") + 
+  ggtitle("Time Spent Over Time") + theme_bw() #+ 
+```
+
+Observed counts smoothed using span=0.5; model estimates scaled by `r round(rescale,2)`x.
+
+
+
+```{r, include = FALSE, echo = FALSE}
+rep_range <- 5:15
+forget <- merge(cards,rev,by="cid") %>% merge(decks, by="did")
+ease_data <- sapply(rep_range, function(rep){
+  responses <- forget %>% filter(reps == rep, lastIvl > 0) %>% 
+    select(ease) %>% unlist
+  sapply(1:4, function(x) sum(responses==x))
+}) %>% t %>% as.data.frame()
+colnames(ease_data) <- 1:4
+data.frame(reps=rep_range, ease_data %>% gather("ease","count")) %>% 
+  ggplot(aes(fill=ease, y=count, x=reps)) + 
+    geom_bar(stat="identity")
+
+interval_range <- 1:30
+forget_data <- sapply(interval_range, function(ivl){
+  #sapply(rep_range, function(rep) { #reps == rep, 
+    responses <- forget %>% filter(lastIvl == ivl) %>% select(ease) %>% unlist
+    mean(responses == 1)
+    #sapply(1:4, function(x) sum(responses==x))
+  #})
+}) %>% unlist %>% plot(xlab = "Last Interval", ylab = "Error")
+```
+
