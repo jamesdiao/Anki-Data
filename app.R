@@ -1,33 +1,23 @@
-#title: "Data Exploration and Visualization Tools for Anki"
-#author: "James Diao"
-#date: "09 April 2019"
-
+# title: "Data Exploration and Visualization Tools for Anki"
+# author: "James Diao"
+# date: "09 April 2019"
+# web app: https://jamesdiao.shinyapps.io/ankidata/
 # rsconnect::deployApp('/Users/jamesdiao/Documents/R/Anki-Data')
-# https://jamesdiao.shinyapps.io/ankidata/
-
-#Set working directory to file folder
-#outdir <- getSrcDirectory(function(dummy) {dummy})
-#setwd(outdir)
 
 ### To-do
-# Separate learned/unlearned
 # Optimize projection + smoother
-# Suggested interval explanation
+# Explanation + math for suggested interval
 
-require(shiny)
-require(rjson)
-require(RSQLite)
-require(DBI)
-require(dplyr)
-require(anytime)
-require(sqldf)
-require(ggplot2)
-require(tidyr)
-require(treemap)
-require(plotly)
-require(shinycssloaders)
-require(shinyalert)
+### Code
 
+# Install and load all required packages
+pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite", "DBI","anytime",
+              "sqldf", "treemap", "plotly","shiny","shinycssloaders","shinyalert")
+installed <- pkg_list %in% installed.packages()[,"Package"]
+if (!all(installed)) install.packages(pkg_list[!installed])
+sapply(pkg_list, require, character.only = T)
+
+# Maximum upload size
 options(shiny.maxRequestSize=50*1024^2)
 
 ui <- fluidPage(
@@ -514,5 +504,6 @@ server <- function(input, output, session) {
   
   
 }
+
 # Run the app ----
 shinyApp(ui, server)
