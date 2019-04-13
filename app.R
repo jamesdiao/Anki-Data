@@ -8,7 +8,6 @@
 ### To-do
 
 # download function for: tables, plots, files
-# add predictive modeling tab
 # explanation + math for suggested interval
 # NLP on words
 
@@ -42,9 +41,6 @@ options(shiny.maxRequestSize=50*1024^2)
 ui <- fluidPage(
   useShinyalert(),
   titlePanel("Data Exploration and Visualization Tools for Anki"),
-  
-  
-
     column(4,
         wellPanel(
           fileInput("file1", "Upload 'collection.anki2' file (50 MB limit)",
@@ -87,17 +83,17 @@ ui <- fluidPage(
              'file. Start by exporting your Anki collection as a ', 
              tags$code('*.apkg'), 'or ', tags$code('*.colpkg'),
              ' file. Rename the file to *.zip and unzip it ',
-             'to find ',tags$code('collection.anki2')
+             'to find ',tags$code('collection.anki2.')
           )),
           column(3,tags$br(),
                  imageOutput("img"))
         ),
-        tabPanel("Treemap", h1(), 
+        tabPanel("Card Distribution", h1(), 
                  radioButtons(inputId = "tm_type", label = "Divisions", inline = TRUE,
                               choices = c("All categories","Learned/unlearned")),
                  plotOutput("treemap", height = "500px") %>% withSpinner
                  ),
-        tabPanel("Over Time", h1(), 
+        tabPanel("New/Review History", h1(), 
                  #radioButtons(inputId = "ot_type", label = "New vs. Review", inline = TRUE,
                 #              choices = c("New Cards","Review Cards")),
                  radioButtons(inputId = "ot_output", label = "Count vs. Time", inline = TRUE,
@@ -107,14 +103,103 @@ ui <- fluidPage(
                  ),
         tabPanel("Projection (beta)", h1(), 
                  #h5("Predictive model generated from empirical values"),
-                 radioButtons(inputId = "pr_output", label = "Review Count vs. Time", inline = TRUE,
-                              choices = c("Review Card Count","Review Time")),
-                 sliderInput(inputId = "span", label = "Smoothing factor", 
-                             min = 0.1, max=1, value = 0.5, step = 0.1),
-                 #textOutput("params") %>% withSpinner, 
-                 h2(),
-                 plotOutput("projection") %>% withSpinner
+                 fluidRow(
+                   column(4, radioButtons(inputId = "pr_output", 
+                                          label = "Review Count vs. Time", 
+                                          inline = FALSE,
+                                          choices = c("Review Card Count","Review Time"))
+                   ), 
+                   column(6,
+                          sliderInput(inputId = "span", 
+                                      label = "Smoothing factor", 
+                                      min = 0.1, max=1, value = 0.5, step = 0.1)
+                   )
+                 ),
+                 fluidRow(
+                   h2(),
+                   plotOutput("projection") %>% withSpinner
                  )
+                   
+        ),     
+        tabPanel("Projection Simulator (beta)", 
+          tags$br(),
+          column(3,
+                 radioButtons("format", inline = TRUE,
+                              label = "Display", 
+                              choices = c("Cards", "Time"), 
+                              selected = "Cards"
+                 ),
+                 sliderInput("cardsperday",
+                             "Cards Per Day",
+                             min = 10,
+                             max = 200,
+                             value = 50, 
+                             step = 5),
+                 sliderInput("cutoff",
+                             "Total Cards in Deck",
+                             min = 1000,
+                             max = 30000,
+                             value = 28000, 
+                             step = 1000),
+                 conditionalPanel(
+                   condition = "input.format == 'Time'",
+                   sliderInput("revperminute",
+                               "Reviews per Minute:",
+                               min = 1,
+                               max = 20,
+                               value = 5, 
+                               step = 1),
+                   sliderInput("newperminute",
+                               "New Cards per Minute:",
+                               min = 0.1,
+                               max = 20,
+                               value = 2, 
+                               step = 0.1)
+                 ),
+                 checkboxInput("advanced",
+                               "Open Advanced Settings",
+                               value = FALSE),
+                 
+                 conditionalPanel(
+                   condition = "input.advanced",
+                   sliderInput("forget",
+                               "Error Rate",
+                               min = 0,
+                               max = 0.2,
+                               value = 0.08, 
+                               step = 0.01),
+                   conditionalPanel(
+                     condition = "input.nomaxinterval == false",
+                     sliderInput("maxinterval",
+                                 "Maximum Interval",
+                                 min = 20,
+                                 max = 500,
+                                 value = 100, 
+                                 step = 20)
+                   ),
+                   checkboxInput("nomaxinterval",
+                                 "No Maximum Interval",
+                                 value = TRUE),
+                   sliderInput("increment",
+                               "Interval Multiplier",
+                               min = 1.5,
+                               max = 4,
+                               value = 2.5, 
+                               step = 0.1),
+                   radioButtons("cumul", 
+                                label = "Graph", 
+                                choices = c("Normal", "Cumulative"), 
+                                selected = "Normal"
+                   ),
+                   checkboxInput("loadbalancer",
+                                 label = "Load Balancer", 
+                                 value = TRUE)
+                  )
+                 ),
+          column(9, 
+                 plotlyOutput("simulator", height = "400px")
+                 )
+        )
       )
     )
 )
@@ -129,9 +214,11 @@ server <- function(input, output, session) {
     adjustDate()
     getData()
     updateSelectizeInput(session, "rm_decks",
-                         choices = as.list(c(rv$decks_cat$category, 
-                                             rv$decks_cat$subcategory))
-                        )
+       choices = as.list(c(
+         rv$decks_cat$category, 
+         rv$decks_cat$subcategory
+       ))
+    )
     shinyalert("Success!", 
                'File successfully loaded. Browse the tab panels to explore the app!', 
                type = "success", timer = 6000)
@@ -151,10 +238,11 @@ server <- function(input, output, session) {
       adjustDate()
       getData()
       updateSelectizeInput(session, "rm_decks",
-                           choices = as.list(c(rv$decks_cat$category, 
-                                               rv$decks_cat$subcategory)
-                                             )
-      )
+         choices = as.list(c(
+             rv$decks_cat$category, 
+             rv$decks_cat$subcategory
+           ))
+         )
     }
     shinyalert("Success!", 
                'File successfully loaded. Browse the tab panels to explore the app!', 
@@ -191,14 +279,13 @@ server <- function(input, output, session) {
     rv$rev$revdate <- anydate(as.numeric(rv$rev$id)/1000 - 5*3600)
     rv$cards <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS cid, 
                            CAST(did AS TEXT) AS did,
-                           reps,
-                           mod
+                           reps, mod
                            FROM cards')
     rv$deckinfo <- dbGetQuery(con,'SELECT decks FROM col') %>% as.character %>% fromJSON
     rv$decks <- data.frame(did = names(rv$deckinfo), 
                            name = sapply(rv$deckinfo, function(d) d$name) %>% setNames(NULL), 
                            stringsAsFactors = FALSE
-    )
+                           )
     dbDisconnect(con)
   })
   
@@ -233,13 +320,11 @@ server <- function(input, output, session) {
       distinct(cid, .keep_all = TRUE) %>% 
       group_by(Date=revdate) %>% 
       summarize(New_Count=n())
-    
     rv$new_time <- rev_w_decks %>% 
       filter((type == 0) | (ivl > 0 & lastIvl < 0)) %>% 
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(New_Time=sum(time/60000))
-    
     rv$all_summary <- merge(rv$new_cards, rv$new_time, "Date", all = TRUE)
     
     # Not new 
@@ -248,7 +333,6 @@ server <- function(input, output, session) {
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(Rev_Count=n(), Rev_Time=sum(time/60000))
-    
     rv$all_summary <- merge(rv$rev_summary, rv$all_summary, "Date", all = TRUE)
     
     rv$error_summary <- rev_w_decks %>% 
@@ -256,27 +340,21 @@ server <- function(input, output, session) {
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(Error_Count=n())
-    
     rv$all_summary <- merge(rv$all_summary, rv$error_summary, "Date", all = TRUE)
     
     rv$total_summary <- rev_w_decks %>% 
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(Total_Count=n())
-    
     rv$all_summary <- merge(rv$all_summary, rv$total_summary, "Date", all = TRUE)
-    
     rv$all_summary[,-1] <- sapply(rv$all_summary[,-1], function(col) 
       replace(col, is.na(col), 0)
     )
     
     rv$dates <- rv$all_summary$Date
     num_days <- rv$dates %>% range %>% diff %>% as.numeric
-    
-    
     rv$error_rates <- rv$all_summary$Error_Count/rv$all_summary$Total_Count
     rv$avg_error <- sum(rv$all_summary$Error_Count)/sum(rv$all_summary$Total_Count)
-    
     #take non-trailing <4s
     real_news <- nrow(rv$all_summary) - which(diff(rev(rv$all_summary$New_Count < 4))==-1)[1]
     rv$avg_new <- sum(rv$all_summary$New_Count[1:real_news])/real_news
@@ -302,8 +380,6 @@ server <- function(input, output, session) {
     }
     rv$cards_w_categories <- cards_w_categories %>% filter(keep)
   })
-  
-  
   
   output$stats_table <- renderTable(
     colnames = TRUE, rownames = FALSE, {
@@ -333,16 +409,8 @@ server <- function(input, output, session) {
                tab
     ) -> tab
     colnames(tab) <- c("Summary Table","")
-    
-    #tab <- rv$all_summary[,-1]; rownames(tab) <- rv$dates
     return(tab)
-    
   })
-  
-  #output$summary_table <- renderDataTable({
-  #    req(rv$COLLECTION_PATH)
-  #    return(rv$all_summary)
-  #})
   
   output$treemap <- renderPlot({
     req(rv$COLLECTION_PATH)
@@ -362,15 +430,15 @@ server <- function(input, output, session) {
                                    GROUP BY category, subcategory"), 
                             data.frame(category="Unlearned", 
                                        subcategory="Unlearned", 
-                                       n_cards = nrow(rv$cards)-sum(learned_deck_summary$n_cards)
+                                       n_cards = nrow(rv$cards) - 
+                                         sum(learned_deck_summary$n_cards)
                                        )
                             )
     }
     tm <- treemap(deck_summary,
                   index=c("category","subcategory"),
                   vSize="n_cards", type="index", palette = "Set2",
-                  title=sprintf("Card distribution by %s", 
-                                tolower(input$tm_type)))
+                  title=sprintf("Card distribution by %s", tolower(input$tm_type)))
     tm
   })
   
@@ -413,13 +481,6 @@ server <- function(input, output, session) {
         geom_hline(yintercept = mean(rv$all_summary$Rev_Time), lty = 2)
     }
   })
-  
-  #output$params <- renderText({
-  #  req(rv$COLLECTION_PATH)
-  #  sprintf("New cards/day = %s, Total cards = %s, Error rate = %s%%, Multiplier = %sx", 
-  #          rv$avg_new %>% round(1), nrow(rv$cards), round(100*rv$avg_error, 1), rv$avg_int %>% round(2)
-  #          )
-  #})
   
   output$projection <- renderPlot({
     req(rv$COLLECTION_PATH)
@@ -576,8 +637,118 @@ server <- function(input, output, session) {
     ))
   }, deleteFile = FALSE)
   
-  
+  output$simulator <- renderPlotly({
+    loadbalancer <- input$loadbalancer
+    cardformat <- input$format == "Cards"
+    cumul <- input$cumul == "Cumulative"
+    terminal_interval <- input$maxinterval
+    if (input$nomaxinterval) {
+      terminal_interval <- 9999
+    }
+    newpermin <- input$newperminute
+    revpermin <- input$revperminute
+    multiplier <- input$increment
+    if (cardformat) {
+      revpermin <- 1
+      newpermin <- 1
+    }
+    cutoff <- input$cutoff
+    cardsperday <- input$cardsperday
+    forget <- input$forget
+    days <- cutoff / cardsperday
+    rlen <- ceiling(1.5*days)
+    #multiplier <- 2.5
+    #terminal_interval <- 180
+    added_terms = 0
+    max_pwr <- floor(log(terminal_interval, base = multiplier))
+    
+    intervals <- ceiling(multiplier^(0:max_pwr)) #c(1, 3, 7, 16, 40, 98)
+    if (rlen > terminal_interval) 
+      added_terms <- floor((rlen-sum(intervals))/terminal_interval)
+    # Cumulative sum of interval gaps (1, 4, 11, ...)
+    csintervals <- c(intervals, rep(terminal_interval, added_terms)) %>% cumsum
+    # Add even-odd jitter to the cumulative interval after some number (keep)
+    # to stabilize stacking effects
+    toggle <- csintervals[4:length(csintervals)]
+    csintervals[4:length(csintervals)] <- toggle + (toggle %% 2 + rep(c(0,1), length.out = length(toggle)))
+    # Scaling factor for adds
+    scaling <- 1 # 1+ forget*(sum(days > csintervals)-2)
+    # Power series of the forget decay factor (e.g., 1.0, 0.90, 0.81, ...)
+    decay_0 <- (1-forget)^(0:length(csintervals))
+    
+    # Empty vector for number of reviews
+    reviews <- rep(0, rlen)
+    
+    for (i in 1:days) {
+      # `range` defines the index of consistently correct cards (2, 5, 12, ...)
+      range <- i + csintervals
+      # Make sure `range` fits inside the `reviews` vector
+      range <- range[range <= rlen]
+      # Make sure `decay` is the same size as `range`
+      decay <- (1-forget)^(0:(length(range)-1))
+      # Add reviews from "perfectly correct" cards initially added on day `i`
+      # graded_scaling <- (1-(days-cut_csint[i]) / days) * (scaling-1) + 1
+      reviews[range] <- reviews[range] + cardsperday * decay * scaling
+      # For each added day (j), add back the series of incorrect cards. 
+      # Assume that none of them are wrong more than twice.
+      
+      for (j in 1:(length(range))) {
+        # `j_range` is the indexes of the series of incorrect cards to add back for each `j`
+        j_range <- range - 1 + range[j]
+        # Make sure `j_range` fits into the `reviews` vector
+        j_range <- j_range[j_range <= rlen]
+        if (length(j_range) == 0) break
+        # Make sure `decay` is the same size as `range`
+        j_decay <- (1-forget)^((j-1):(length(j_range)+j-2))
+        # Add back the series of incorrect cards (2nd term = # of incorrect cards). 
+        reviews[j_range] <- reviews[j_range] + forget*cardsperday*j_decay*scaling 
+      }
+    }
+    
+    if (!cardformat) {
+      reviews <- reviews / revpermin + c(rep(cardsperday / newpermin, days), 
+                                         rep(0, length(reviews)-days))
+    }
+    
+    # Round review counts to integers
+    reviews <- reviews %>% round(0)
+    if (cumul)
+      reviews <- cumsum(reviews)
+    # Two-part smoothing process to simulate load balancing
+    review_data <- data.frame(Day = 1:length(reviews), estimated = reviews)
+    smoothed_1 <- reviews[1:4]
+    smoothed_2 <- predict(loess(estimated ~ Day, 
+                                data = review_data[5:nrow(review_data),], 
+                                span = 0.1)) #%>% round(0)
+    if (loadbalancer) {
+      smoothed <- c(smoothed_1, smoothed_2)
+    } else {
+      smoothed <- reviews
+    }
+    # Final data frame     
+    if (cardformat) {
+      all_data <- data.frame(review_data, Reviews = smoothed)
+      plotdata <- all_data %>% gather(key = "Type", value = "Reviews", -Day) %>% 
+        filter(Type == "Reviews")
+      plot <- plot_ly(data = plotdata, x= ~Day, y = ~Reviews, fill = 'tozeroy', 
+                      type = 'scatter', mode = 'lines', hoverinfo = 'text',
+                      text = ~paste("Day: ", Day, '<br>Reviews: ', Reviews %>% round(0))
+      ) 
+    } else {
+      all_data <- data.frame(review_data, Time = smoothed)
+      plotdata <- all_data %>% gather(key = "Type", value = "Time", -Day) %>% 
+        filter(Type == "Time")
+      plot <- plot_ly(data = plotdata, x= ~Day, y = ~Time, fill = 'tozeroy', 
+                      type = 'scatter', mode = 'lines', hoverinfo = 'text', 
+                      text = ~paste("Day: ", Day, '<br>Time (Min): ', Time %>% round(0))
+      )  %>% layout(yaxis = list(title = "Time (Min)", range = c(0,max(reviews)*1.1)))
+    }
+    plot$elementId <- NULL
+    plot 
+    
+  })
 }
 
 # Run the app ----
 shinyApp(ui, server)
+
