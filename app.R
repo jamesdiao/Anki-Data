@@ -61,7 +61,7 @@ ui <- fluidPage(
                                      "https://jamesdiao.shinyapps.io/anki-data/"),
           tags$br(),
           tags$b("Source code:"), tags$a(href="https://github.com/jamesdiao/Anki-Data/", 
-                                         "https://github.com/jamesdiao/Anki-Data/"),
+                                         "https://github.com/jamesdiao/anki-data/"),
           tags$br(),
           tags$b("Last updated:"), "April 13, 2019"
           )
@@ -90,7 +90,7 @@ ui <- fluidPage(
         ),
         tabPanel("Card Distribution", h1(), 
                  radioButtons(inputId = "tm_type", label = "Divisions", inline = TRUE,
-                              choices = c("All categories","Learned/unlearned")),
+                              choices = c("All Categories","Learned/Unlearned")),
                  plotOutput("treemap", height = "500px") %>% withSpinner
                  ),
         tabPanel("New/Review History", h1(), 
@@ -125,7 +125,7 @@ ui <- fluidPage(
           tags$br(),
           column(3,
                  radioButtons("format", inline = TRUE,
-                              label = "Display", 
+                              label = "Y-Axis Display", 
                               choices = c("Cards", "Time"), 
                               selected = "Cards"
                  ),
