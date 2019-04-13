@@ -1,21 +1,40 @@
 # title: "Data Exploration and Visualization Tools for Anki"
 # author: "James Diao"
-# date: "09 April 2019"
+# date: "13 April 2019"
+
 # web app: https://jamesdiao.shinyapps.io/ankidata/
 # rsconnect::deployApp('/Users/jamesdiao/Documents/R/Anki-Data')
 
 ### To-do
-# Optimize projection + smoother
-# Explanation + math for suggested interval
+
+# download function for: tables, plots, files
+# add predictive modeling tab
+# explanation + math for suggested interval
+# NLP on words
 
 ### Code
 
 # Install and load all required packages
-pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite", "DBI","anytime",
+pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite", "DBI","anytime","scales",
               "sqldf", "treemap", "plotly","shiny","shinycssloaders","shinyalert")
 installed <- pkg_list %in% installed.packages()[,"Package"]
 if (!all(installed)) install.packages(pkg_list[!installed])
 sapply(pkg_list, require, character.only = T)
+
+require(dplyr)
+require(tidyr)
+require(ggplot2)
+require(rjson)
+require(RSQLite)
+require(DBI)
+require(anytime)
+require(sqldf)
+require(treemap)
+require(plotly)
+require(scales)
+require(shiny)
+require(shinycssloaders)
+require(shinyalert)
 
 # Maximum upload size
 options(shiny.maxRequestSize=50*1024^2)
@@ -23,74 +42,91 @@ options(shiny.maxRequestSize=50*1024^2)
 ui <- fluidPage(
   useShinyalert(),
   titlePanel("Data Exploration and Visualization Tools for Anki"),
-  p("Last updated: April 9, 2019"),
   
-  sidebarLayout(
-    sidebarPanel(
-      fileInput("file1", "Upload 'collection.anki2' file (50 MB limit)",
-                multiple = FALSE),
-      actionButton(inputId = "autofile", label = "Try with Test File"),
-      h1(),
-      selectizeInput("rm_decks", "Decks to exclude", 
-                     choices = c("File Not Found"), selected = c("File Not Found"), multiple = TRUE)
+  
+
+    column(4,
+        wellPanel(
+          fileInput("file1", "Upload 'collection.anki2' file (50 MB limit)",
+                    multiple = FALSE),
+          actionButton(inputId = "autofile", label = "Try with Test File", 
+                       icon("paper-plane"), 
+                       style="color: #fff; background-color: #337ab7; border-color: #2e6da4"),
+          h1(),
+          selectizeInput("rm_decks", "Decks to exclude:", 
+                         choices = c("File Not Found"), selected = c("File Not Found"), multiple = TRUE),
+          dateInput("ignore_before", "Ignore cards before (defaults to first day):"),
+          h2(),
+          tableOutput("stats_table") %>% withSpinner
+        ),
+        wellPanel(
+        tags$div(
+          tags$b("Web app:"), tags$a(href="https://jamesdiao.shinyapps.io/anki-data/", 
+                                     "https://jamesdiao.shinyapps.io/anki-data/"),
+          tags$br(),
+          tags$b("Source code:"), tags$a(href="https://github.com/jamesdiao/Anki-Data/", 
+                                         "https://github.com/jamesdiao/Anki-Data/"),
+          tags$br(),
+          tags$b("Last updated:"), "April 13, 2019"
+          )
+        )
     ),
     
-    mainPanel(
+    column(8,
       tabsetPanel(
-        tabPanel("Instructions", 
-                 h1(),
-                 helpText('Instructions: the app extracts data from a "collection.anki2" ',
-                          'file, which should contain all of your relevant scheduling ',
-                          'data. Start by exporting your Anki collection as a *.apkg or ',
-                          '*.colpkg file. Rename the file to *.zip and unzip it ',
-                          'to find the "collection.anki2" file. After ',
-                          'uploading this file, you can explore the ',
-                          'various analyses and visualizations in each',
-                          'tab panel. To explore the app using preloaded sample data, ',
-                          'hit "Try with Test File".'),
-                 helpText('All source code is accessible at ',
-                          'https://github.com/jamesdiao/Anki-Reviews.', 
-                          'If the shinyapps.io web app is too slow, ',
-                          'you can clone the repository and run the app',
-                          'locally.'),
-                 imageOutput("img", height = "500px")
+        tabPanel("Upload", 
+          column(5,
+           tags$div(
+             tags$br(),
+             tags$b('Instructions: '), tags$br(),
+             'Upload a ',tags$code('collection.anki2'), 'file (details below) or hit ',
+             '"Try with Test File" to explore the app using preloaded sample data.',
+             tags$br(), tags$br(),
+             tags$b('Details: '), tags$br(), 
+             'This app extracts scheduling data from a',tags$code('collection.anki2'),
+             'file. Start by exporting your Anki collection as a ', 
+             tags$code('*.apkg'), 'or ', tags$code('*.colpkg'),
+             ' file. Rename the file to *.zip and unzip it ',
+             'to find ',tags$code('collection.anki2')
+          )),
+          column(3,tags$br(),
+                 imageOutput("img"))
         ),
-        tabPanel("Summary", h1(), tableOutput("table") %>% withSpinner),
         tabPanel("Treemap", h1(), 
                  radioButtons(inputId = "tm_type", label = "Divisions", inline = TRUE,
                               choices = c("All categories","Learned/unlearned")),
                  plotOutput("treemap", height = "500px") %>% withSpinner
                  ),
         tabPanel("Over Time", h1(), 
-                 radioButtons(inputId = "ot_type", label = "New vs. Review", inline = TRUE,
-                              choices = c("New Cards","Review Cards")),
+                 #radioButtons(inputId = "ot_type", label = "New vs. Review", inline = TRUE,
+                #              choices = c("New Cards","Review Cards")),
                  radioButtons(inputId = "ot_output", label = "Count vs. Time", inline = TRUE,
                               choices = c("Card Count","Time Spent")),
-                 plotOutput("overtime") %>% withSpinner
+                 plotOutput("newplot", height = "250px") %>% withSpinner,
+                 plotOutput("revplot", height = "250px") %>% withSpinner
                  ),
-        tabPanel("Projection", h1(), 
+        tabPanel("Projection (beta)", h1(), 
+                 #h5("Predictive model generated from empirical values"),
                  radioButtons(inputId = "pr_output", label = "Review Count vs. Time", inline = TRUE,
                               choices = c("Review Card Count","Review Time")),
                  sliderInput(inputId = "span", label = "Smoothing factor", 
                              min = 0.1, max=1, value = 0.5, step = 0.1),
-                 h5("Model generated for empirical values:"),
-                 textOutput("params") %>% withSpinner, 
+                 #textOutput("params") %>% withSpinner, 
                  h2(),
                  plotOutput("projection") %>% withSpinner
                  )
       )
-      
     )
-    
-  )
 )
 
 server <- function(input, output, session) {
   
-  rv <- reactiveValues()
+  rv <- reactiveValues(IGNORE_BEFORE = NULL)
   
   observeEvent(input$autofile, {
     rv$COLLECTION_PATH <- "Files/JAD/collection.anki2"
+    fromCon()
+    adjustDate()
     getData()
     updateSelectizeInput(session, "rm_decks",
                          choices = as.list(c(rv$decks_cat$category, 
@@ -103,10 +139,16 @@ server <- function(input, output, session) {
   
   observeEvent(input$file1, {
     rv$COLLECTION_PATH <- input$file1$datapath
-    if (!grepl("anki2", rv$COLLECTION_PATH)) {
-      shinyalert("Oops!", 'Please upload a "collection.anki" file', type = "error")
-      rv$COLLECTION_PATH <- NULL
+    #if (grepl("\\.[a-z]+pkg$", rv$COLLECTION_PATH)) {
+    #  unzip(input$file1$datapath, exdir = "./Files/temp")
+    #  rv$COLLECTION_PATH <- paste(getwd(),"collection.anki2",sep="/")
+    #}
+    if (!grepl("\\.anki2$", rv$COLLECTION_PATH)) { #& !grepl("\\.[a-z]+pkg$", rv$COLLECTION_PATH)) {
+        shinyalert("Oops!", 'Please upload a "collection.anki2" file', type = "error") #"*.apkg", "*.colpkg", or 
+        rv$COLLECTION_PATH <- NULL
     } else {
+      fromCon()
+      adjustDate()
       getData()
       updateSelectizeInput(session, "rm_decks",
                            choices = as.list(c(rv$decks_cat$category, 
@@ -121,35 +163,61 @@ server <- function(input, output, session) {
   
   observeEvent(input$rm_decks, {
     req(rv$COLLECTION_PATH)
+    fromCon()
     getData()
   }, ignoreNULL = FALSE)
   
-  getData <- reactive({
-    
-    RM_DECKS <- input$rm_decks
+  observeEvent(input$ignore_before, {
+    req(rv$COLLECTION_PATH)
+    fromCon()
+    getData()
+  }, ignoreNULL = FALSE)
+  
+  adjustDate <- reactive({
+    revdates <- rv$rev$revdate %>% unique %>% sort
+    rv$IGNORE_BEFORE <- min(revdates)
+    gaps <- revdates %>% diff %>% as.numeric
+    if (max(gaps) > 6*30)
+      rv$IGNORE_BEFORE <- revdates[which.max(gaps)+1]
+    updateDateInput(session, "ignore_before",
+                    value = rv$IGNORE_BEFORE, min = min(revdates), max = Sys.Date()
+    )
+  })
+  
+  fromCon <- reactive({
     con <- dbConnect(RSQLite::SQLite(), dbname=rv$COLLECTION_PATH)
-    deckinfo <- dbGetQuery(con,'SELECT decks FROM col') %>% as.character %>% fromJSON
-    rv$decks <- data.frame(did = names(deckinfo), 
-                           name = sapply(deckinfo, function(d) d$name) %>% setNames(NULL), 
+    rv$rev <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS id, CAST(cid AS TEXT) AS cid,
+                         time, type, ease, factor, ivl, lastivl FROM revlog') 
+    rv$rev$revdate <- anydate(as.numeric(rv$rev$id)/1000 - 5*3600)
+    rv$cards <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS cid, 
+                           CAST(did AS TEXT) AS did,
+                           reps,
+                           mod
+                           FROM cards')
+    rv$deckinfo <- dbGetQuery(con,'SELECT decks FROM col') %>% as.character %>% fromJSON
+    rv$decks <- data.frame(did = names(rv$deckinfo), 
+                           name = sapply(rv$deckinfo, function(d) d$name) %>% setNames(NULL), 
                            stringsAsFactors = FALSE
     )
+    dbDisconnect(con)
+  })
+  
+  getData <- reactive({
+    RM_DECKS <- input$rm_decks
     decks_cat <- rv$decks
-    decks_cat$category <- gsub(":+.*$","",decks_cat$name) %>% trimws
-    decks_cat$subcategory <- sub(":+",";;",decks_cat$name)
+    decks_cat$category <- gsub("::.*$","",decks_cat$name) %>% trimws
+    decks_cat$subcategory <- sub("::",";;",decks_cat$name)
     decks_cat$subcategory <- sub(".*;;","",decks_cat$subcategory)
     decks_cat$subcategory <- gsub(":.*$","",decks_cat$subcategory) %>% trimws
     rv$decks_cat <- decks_cat
-    rv$rev <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS id, CAST(cid AS TEXT) AS cid,
-                         time, type, ease, factor FROM revlog')
-    rv$cards <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS cid, 
-                           CAST(did AS TEXT) AS did,
-                           reps
-                           FROM cards')
-    dbDisconnect(con)
     rv$cards_w_decks <- merge(rv$cards, rv$decks,by="did")
-    rv$rev$revdate <- anydate(as.numeric(rv$rev$id)/1000)
+    if (input$ignore_before != Sys.Date()){
+      rv$IGNORE_BEFORE <- input$ignore_before
+    }
+    rv$rev <- rv$rev %>% filter(revdate >= rv$IGNORE_BEFORE)#-10)
     # Assign deck info to reviews
-    rev_w_decks <- merge(rv$rev, rv$cards_w_decks, by="cid")
+    rev_w_decks <- merge(rv$rev, rv$cards_w_decks, by="cid", all.x = TRUE)
+    
     keep <- rep(TRUE, nrow(rev_w_decks))
     if (!is.null(RM_DECKS)) {
       keep <- sapply(rev_w_decks$name, function(n){
@@ -157,33 +225,74 @@ server <- function(input, output, session) {
       }) %>% setNames(NULL)
     }
     rev_w_decks <- rev_w_decks %>% filter(keep)
-    rev_w_decks_unique <- rev_w_decks[!duplicated(
-      paste(rev_w_decks$cid, rev_w_decks$type, rev_w_decks$revdate)),]
-    rev_w_decks <- rev_w_decks
-    rv$all_summary <- sqldf("SELECT revdate AS Date, 
-                            COUNT(*) AS Count, 
-                            SUM(time) AS Time,
-                            type 
-                            FROM rev_w_decks_unique 
-                            GROUP BY revdate, type") %>% 
-      mutate(Date = anydate(Date), 
-             Time = Time/60000)
-    rv$time_summary <- sqldf("SELECT revdate AS Date, 
-                             COUNT(*) AS Count, 
-                             SUM(time) AS Time,
-                             type 
-                             FROM rev_w_decks 
-                             GROUP BY revdate, type") %>% 
-      mutate(Date = anydate(Date), 
-             Time = Time/60000)
-    rv$error_summary <- sqldf("SELECT revdate AS Date, 
-                              COUNT(*) AS Count 
-                              FROM rev_w_decks 
-                              WHERE ease==1 AND type==1 
-                              GROUP BY revdate") %>% 
-      mutate(Date = anydate(Date))
     rv$rev_w_decks <- rev_w_decks
-    rv$rev_w_decks_unique <- rev_w_decks_unique
+    
+    rv$new_cards <- rev_w_decks %>% 
+      filter(ivl > 0, lastIvl < 0) %>% 
+      arrange(cid, id) %>% 
+      distinct(cid, .keep_all = TRUE) %>% 
+      group_by(Date=revdate) %>% 
+      summarize(New_Count=n())
+    
+    rv$new_time <- rev_w_decks %>% 
+      filter((type == 0) | (ivl > 0 & lastIvl < 0)) %>% 
+      arrange(cid, id) %>% 
+      group_by(Date=revdate) %>% 
+      summarize(New_Time=sum(time/60000))
+    
+    rv$all_summary <- merge(rv$new_cards, rv$new_time, "Date", all = TRUE)
+    
+    # Not new 
+    rv$rev_summary <- rev_w_decks %>% 
+      filter(type != 0) %>% 
+      arrange(cid, id) %>% 
+      group_by(Date=revdate) %>% 
+      summarize(Rev_Count=n(), Rev_Time=sum(time/60000))
+    
+    rv$all_summary <- merge(rv$rev_summary, rv$all_summary, "Date", all = TRUE)
+    
+    rv$error_summary <- rev_w_decks %>% 
+      filter(ease==1) %>% 
+      arrange(cid, id) %>% 
+      group_by(Date=revdate) %>% 
+      summarize(Error_Count=n())
+    
+    rv$all_summary <- merge(rv$all_summary, rv$error_summary, "Date", all = TRUE)
+    
+    rv$total_summary <- rev_w_decks %>% 
+      arrange(cid, id) %>% 
+      group_by(Date=revdate) %>% 
+      summarize(Total_Count=n())
+    
+    rv$all_summary <- merge(rv$all_summary, rv$total_summary, "Date", all = TRUE)
+    
+    rv$all_summary[,-1] <- sapply(rv$all_summary[,-1], function(col) 
+      replace(col, is.na(col), 0)
+    )
+    
+    rv$dates <- rv$all_summary$Date
+    num_days <- rv$dates %>% range %>% diff %>% as.numeric
+    
+    
+    rv$error_rates <- rv$all_summary$Error_Count/rv$all_summary$Total_Count
+    rv$avg_error <- sum(rv$all_summary$Error_Count)/sum(rv$all_summary$Total_Count)
+    
+    #take non-trailing <4s
+    real_news <- nrow(rv$all_summary) - which(diff(rev(rv$all_summary$New_Count < 4))==-1)[1]
+    rv$avg_new <- sum(rv$all_summary$New_Count[1:real_news])/real_news
+    #rv$avg_new <- sum(rv$all_summary$New_Count[-length(rv$dates)])/(num_days-1)
+    
+    rv$new_min_per_card <- sum(rv$all_summary$New_Time[-length(rv$dates)]) / 
+      sum(rv$all_summary$New_Count[-length(rv$dates)])
+    rv$avg_rev <- sum(rv$all_summary$Rev_Count[-length(rv$dates)])/(num_days-1)
+    rv$rev_min_per_card <- sum(rv$all_summary$Rev_Time[-length(rv$dates)]) / 
+      sum(rv$all_summary$Rev_Count[-length(rv$dates)])
+    rv$avg_int <- mean((rv$rev$factor[rv$rev$factor > 0]))/1000
+    rv$new_int <- rv$avg_int*log(0.9)/log(1-max(rv$avg_error,0.01))
+    rv$totaldaystocompletion <- ceiling(nrow(rv$cards)/rv$avg_new)
+    rv$daystocompletion <- rv$totaldaystocompletion-num_days
+    rv$completiondate <- ceiling(nrow(rv$cards)/rv$avg_new)-num_days+Sys.Date()
+    
     cards_w_categories <- merge(rv$cards,rv$decks_cat,by="did") 
     keep <- TRUE
     if (!is.null(RM_DECKS)) {
@@ -196,62 +305,44 @@ server <- function(input, output, session) {
   
   
   
-  
-  
-  output$table <- renderTable(
-    colnames = FALSE, rownames = TRUE, {
+  output$stats_table <- renderTable(
+    colnames = TRUE, rownames = FALSE, {
     req(rv$COLLECTION_PATH)
-    rev <- rv$rev
-    cards <- rv$cards
-    all_summary <- rv$all_summary
-    time_summary <- rv$time_summary
-    error_summary <- rv$error_summary
-    
-    new_summary <- all_summary %>% filter(type==0) %>% select(Date, Count) 
-    rev_summary <- all_summary %>% filter(type==1) %>% select(Date, Count)
-    new_time <- time_summary %>% filter(type==0) %>% select(Date, Time, Count)
-    rev_time <- time_summary %>% filter(type==1) %>% select(Date, Time, Count)
-    time_summary <- merge(new_time, rev_time, by="Date", all = TRUE) 
-    time_summary[, 2:ncol(time_summary)] <- apply(time_summary[, 2:ncol(time_summary)], 2, 
-                                                  function(col) {
-                                                    if (class(col)=="numeric") replace(col, is.na(col), 0) 
-                                                    else col
-                                                  })
-    colnames(time_summary) <- c("Date","New_Time","New_Count","Review_Time","Review_Count")
-    
-    rev_map <- rev_summary$Count %>% setNames(rev_summary$Date)
-    error_rates = error_summary$Count/rev_map[as.character(error_summary$Date)]
-    avg_int <- mean((rev$factor[rev$factor > 0]))/1000
-    avg_error <- sum(error_summary$Count)/sum(rev_map[as.character(error_summary$Date)])
-    new_int <- avg_int*log(0.9)/log(1-max(avg_error,0.01))
-    
-    avg_new = new_summary$Count %>% mean
-    avg_rev = rev_summary$Count %>% mean
-    daystocompletion <- ceiling(nrow(cards)/avg_new)-nrow(new_summary)
-    completiondate <- ceiling(nrow(cards)/avg_new)-nrow(new_summary)+Sys.Date()
-    
     tab <- data.frame(
-      avg_new = avg_new %>% round(1),
-      avg_rev = avg_rev %>% round(1),
-      avg_error = sprintf("%s%%", 100*avg_error %>% signif(3)),
-      avg_int = sprintf("%sx", avg_int %>% round(2)),
-      new_int = sprintf("%sx", new_int %>% round(2)),
-      daystocompletion = daystocompletion %>% round(1),
-      completiondate = completiondate %>% round(1)
+      total_cards = nrow(rv$cards),
+      avg_new = rv$avg_new %>% round(1),
+      avg_rev = rv$avg_rev %>% round(1),
+      avg_error = sprintf("%s%%", 100*rv$avg_error %>% signif(3)),
+      #avg_int = sprintf("%sx", rv$avg_int %>% round(2)),
+      #new_int = sprintf("%sx", rv$new_int %>% round(2)),
+      completiondate = rv$completiondate %>% format("%b %d, %Y"),
+      daystocompletion = sprintf("%s/%s", 
+                                 rv$daystocompletion %>% round(1), 
+                                 rv$totaldaystocompletion %>% round(1)
+                                 )
     ) %>% t
     
-    rownames(tab) <- c("Average News/Day",
-                       "Average Reviews/Day",
-                       "Average Error",
-                       "Average Interval",
-                       "Suggested Base Interval", 
-                       "Estimated Days to Completion",
-                       "Estimated Completion Date")
-    colnames(tab) <- c("Statistic")
+    data.frame(c("Total Cards",
+                 "Average New Cards/Day",
+                 "Average Review Cards/Day",
+                 "Average Error Rate",
+                 #"Average Interval",
+                 #"Suggested Base Interval (targeting 90% error)", 
+                 "Estimated Completion Date",
+                 "Days to Completion (Remaining/Total)"),
+               tab
+    ) -> tab
+    colnames(tab) <- c("Summary Table","")
+    
+    #tab <- rv$all_summary[,-1]; rownames(tab) <- rv$dates
     return(tab)
     
   })
   
+  #output$summary_table <- renderDataTable({
+  #    req(rv$COLLECTION_PATH)
+  #    return(rv$all_summary)
+  #})
   
   output$treemap <- renderPlot({
     req(rv$COLLECTION_PATH)
@@ -283,68 +374,52 @@ server <- function(input, output, session) {
     tm
   })
   
-  output$overtime <- renderPlot({
-    
+  output$newplot <- renderPlot({
     req(rv$COLLECTION_PATH)
-    all_summary <- rv$all_summary
-    time_summary <- rv$time_summary
-    new_summary <- all_summary %>% filter(type==0) %>% select(Date, Count) 
-    rev_summary <- all_summary %>% filter(type==1) %>% select(Date, Count)
-    new_time <- time_summary %>% filter(type==0) %>% select(Date, Time, Count)
-    rev_time <- time_summary %>% filter(type==1) %>% select(Date, Time, Count)
-    avg_new = new_summary$Count %>% mean
-    avg_rev = rev_summary$Count %>% mean
-    
     if (input$ot_output == "Card Count") {
-      if (input$ot_type == "New Cards") {
-        ggplot(new_summary,aes(x=Date,y=Count)) + 
-          geom_bar(stat="identity",fill="darkblue") +
-          ggtitle("New Cards Over Time") +
-          xlab("Date") +
-          ylab("New Cards") +
-          geom_hline(yintercept = avg_new, lty = 2)
-      } else {
-        ggplot(rev_summary,aes(x=Date,y=Count)) + 
-          geom_bar(stat="identity",fill="darkblue") +
-          #geom_smooth(method='auto') + 
-          ggtitle("Review Cards Over Time") +
-          xlab("Date") +
-          ylab("Review Cards") +
-          geom_hline(yintercept = avg_rev, lty = 2)
-      }
+      ggplot(rv$all_summary,aes(x=Date,y=New_Count)) + 
+        geom_bar(stat="identity",fill="darkgreen") +
+        ggtitle("New Card Count Over Time") +
+        xlab("Date") +
+        ylab("New Cards") +
+        geom_hline(yintercept = rv$avg_new, lty = 2)
     } else {
-      if (input$ot_type == "New Cards") {
-        ggplot(new_time,aes(x=Date,y=Time)) + 
-          geom_bar(stat="identity",fill="darkblue") +
-          ggtitle("Time Spent on New Cards Over Time") +
-          xlab("Date") +
-          ylab("Time (min)") +
-          geom_hline(yintercept = mean(new_time$Time), lty = 2)
-      } else {
-        ggplot(rev_time,aes(x=Date,y=Time)) + 
-          geom_bar(stat="identity",fill="darkblue") +
-          #geom_smooth(method='auto') + 
-          ggtitle("Time Spent on Review Cards Over Time") +
-          xlab("Date") +
-          ylab("Time (min)") +
-          geom_hline(yintercept = mean(rev_time$Time), lty = 2)
-      }
+      ggplot(rv$all_summary,aes(x=Date,y=New_Time)) + 
+        geom_bar(stat="identity",fill="darkgreen") +
+        ggtitle("Time Spent on New Cards Over Time") +
+        xlab("Date") +
+        ylab("Time (min)") +
+        geom_hline(yintercept = mean(rv$all_summary$New_Time), lty = 2)
     }
   })
   
-  output$params <- renderText({
+  output$revplot <- renderPlot({
     req(rv$COLLECTION_PATH)
-    new_summary <- rv$all_summary %>% filter(type==0) %>% select(Date, Count) 
-    avg_new <- new_summary$Count %>% mean
-    rev_summary <- rv$all_summary %>% filter(type==1) %>% select(Date, Count)
-    rev_map <- rev_summary$Count %>% setNames(rev_summary$Date)
-    avg_error <- sum(rv$error_summary$Count)/sum(rev_map[as.character(rv$error_summary$Date)])
-    avg_int <- mean((rv$rev$factor[rv$rev$factor > 0]))/1000
-    
-    sprintf("New cards/day = %s, Total cards = %s, Error rate = %s%%, Multiplier = %sx", 
-            avg_new %>% round(1), nrow(rv$cards),round(100*avg_error, 1), avg_int %>% round(2)
-            )
+    if (input$ot_output == "Card Count") {
+      ggplot(rv$all_summary,aes(x=Date,y=Rev_Count)) + 
+        geom_bar(stat="identity",fill="darkblue") +
+        #geom_smooth(method='auto') + 
+        ggtitle("Review Card Count Over Time") +
+        xlab("Date") +
+        ylab("Review Cards") +
+        geom_hline(yintercept = rv$avg_rev, lty = 2)
+    } else {
+      ggplot(rv$all_summary,aes(x=Date,y=Rev_Time)) + 
+        geom_bar(stat="identity",fill="darkblue") +
+        #geom_smooth(method='auto') + 
+        ggtitle("Time Spent on Review Cards Over Time") +
+        xlab("Date") +
+        ylab("Time (min)") +
+        geom_hline(yintercept = mean(rv$all_summary$Rev_Time), lty = 2)
+    }
   })
+  
+  #output$params <- renderText({
+  #  req(rv$COLLECTION_PATH)
+  #  sprintf("New cards/day = %s, Total cards = %s, Error rate = %s%%, Multiplier = %sx", 
+  #          rv$avg_new %>% round(1), nrow(rv$cards), round(100*rv$avg_error, 1), rv$avg_int %>% round(2)
+  #          )
+  #})
   
   output$projection <- renderPlot({
     req(rv$COLLECTION_PATH)
@@ -352,39 +427,19 @@ server <- function(input, output, session) {
     RM_DECKS <- input$rm_decks
     rev <- rv$rev
     cards <- rv$cards
-    all_summary <- rv$all_summary
-    time_summary <- rv$time_summary
-    error_summary <- rv$error_summary
     cards_w_categories <- rv$cards_w_categories
     
     all_deck_summary <- sqldf("SELECT category, subcategory, count(*) AS n_cards 
                               FROM cards_w_categories 
                               GROUP BY category, subcategory")
     
-    new_summary <- all_summary %>% filter(type==0) %>% select(Date, Count) 
-    rev_summary <- all_summary %>% filter(type==1) %>% select(Date, Count)
-    
-    
-    new_time <- time_summary %>% filter(type==0) %>% select(Date, Time, Count)
-    rev_time <- time_summary %>% filter(type==1) %>% select(Date, Time, Count)
-    time_summary <- merge(new_time, rev_time, by="Date", all = TRUE) 
-    time_summary[, 2:ncol(time_summary)] <- apply(time_summary[, 2:ncol(time_summary)], 2, 
-                                                  function(col) {
-                                                    if (class(col)=="numeric") replace(col, is.na(col), 0) 
-                                                    else col
-                                                  })
-    colnames(time_summary) <- c("Date","New_Time","New_Count","Review_Time","Review_Count")
-    
-    rev_map <- rev_summary$Count %>% setNames(rev_summary$Date)
-    error_rates <- error_summary$Count/rev_map[as.character(error_summary$Date)]
-    avg_error <- sum(error_summary$Count)/sum(rev_map[as.character(error_summary$Date)])
-    
-    avg_new <- new_summary$Count %>% mean
-    new_min_per_card <- sum(new_time$Time)/sum(new_time$Count)
-    avg_rev <- rev_summary$Count %>% mean
-    rev_min_per_card <- sum(rev_time$Time)/sum(rev_time$Count)
-    avg_int <- mean((rev$factor[rev$factor > 0]))/1000
-    new_int <- avg_int*log(0.9)/log(1-max(avg_error,0.01))
+    avg_error <- rv$avg_error
+    avg_new = rv$avg_new
+    new_min_per_card <- rv$new_min_per_card
+    avg_rev <- rv$avg_rev
+    rev_min_per_card <- rv$rev_min_per_card
+    avg_int <- rv$avg_int
+    new_int <- rv$new_int
     
     multiplier <- avg_int
     cardsperday <- avg_new
@@ -439,57 +494,74 @@ server <- function(input, output, session) {
         # Add back the series of incorrect cards (2nd term = # of incorrect cards). 
         reviews[j_range] <- reviews[j_range] + forget*cardsperday*j_decay*scaling 
       }
-      
     }
-    
     
     reviews <- reviews %>% round(0)
     # Two-part smoothing process to simulate load balancing
-    review_data <- data.frame(Day = 1:length(reviews), estimated = reviews)
+    review_data <- data.frame(Day = 1:length(reviews), Predicted = reviews)
     smoothed_1 <- reviews[1:4]
-    smoothed_2 <- predict(loess(estimated ~ Day, 
+    smoothed_2 <- predict(loess(Predicted ~ Day, 
                                 data = review_data[5:nrow(review_data),], 
                                 span = 0.1))
     smoothed <- c(smoothed_1, smoothed_2)
+    use_dates <- nrow(review_data)>150
+    
     
     if (input$pr_output == "Review Card Count") {
       # Final data frame
-      obs <- rev_summary$Count
-      obs_data <- data.frame(Day = 1:length(obs), estimated = obs)
-      obs_smoothed <- predict(loess(estimated ~ Day, span = span, data = obs_data))
+      obs <- rv$all_summary$Rev_Count
+      obs_data <- data.frame(Day = 1:length(obs), Predicted = obs)
+      obs_smoothed <- predict(loess(Predicted ~ Day, span = span, data = obs_data))
       
       f <- function(x) {
-        sum((smoothed[1:nrow(rev_summary)]*x - obs_smoothed)^2)
+        min_len <- min(length(smoothed), length(obs_smoothed))
+        sum((smoothed[1:min_len]*x - obs_smoothed[1:min_len])^2)
       }
       rescale <- optimize(f=f, interval = c(0,2))$minimum
-      
-      all_data <- data.frame(rescale*review_data, 
-                             observed = obs_smoothed[1:nrow(review_data)])
-      
+      all_data <- data.frame(Day = review_data$Day,
+                             Predicted = rescale * review_data$Predicted,
+                             Observed = obs_smoothed[1:nrow(review_data)])
+      if (use_dates) {
+        all_data <- all_data %>% mutate(Day = as.POSIXct(rv$IGNORE_BEFORE + Day))
+      }
       plotdata <- all_data %>% gather(key = "Type", value = "Reviews", -Day) 
       ggp <- ggplot(plotdata, aes(x=Day, y=Reviews, color=Type)) + 
-        ggtitle(sprintf("Projected Review Counts Over Time (rescale factor = %s)", signif(rescale,2))) + 
+        ggtitle(sprintf("Projected Review Counts Over Time (rescale factor = %s%%)", 
+                        signif(100*rescale-100,2))) + 
         geom_line(lwd = 0.8) + theme_bw() 
       
     } else {
-      obs_time <- time_summary$New_Time + time_summary$Review_Time
-      obs_time_data <- data.frame(Day = 1:length(obs_time), estimated = obs_time)
-      obs_time_smoothed <- predict(loess(estimated ~ Day, span = span, data = obs_time_data))
+      obs_time <- rv$all_summary$New_Time + rv$all_summary$Rev_Time
+      obs_time_data <- data.frame(Day = 1:length(obs_time), Predicted = obs_time)
+      obs_time_smoothed <- predict(loess(Predicted ~ Day, span = span, data = obs_time_data))
       
       smoothed_time <- review_data*rev_min_per_card+cardsperday*new_min_per_card
       f <- function(x) {
-        sum((smoothed_time[1:nrow(time_summary), "estimated"]*x - obs_time_smoothed)^2)
+        min_len <- min(nrow(smoothed_time), length(obs_time_smoothed))
+        sum((smoothed_time[1:min_len, "Predicted"]*x -
+               obs_time_smoothed[1:min_len])^2)
       }
       rescale <- optimize(f=f, interval = c(0,2))$minimum
       
       
-      time_data <- data.frame(rescale*(review_data*rev_min_per_card+cardsperday*new_min_per_card), 
-                              observed = obs_time_smoothed[1:nrow(review_data)])
-      
+      time_data <- data.frame(Day = review_data$Day,
+                              Predicted = rescale*(review_data$Predicted*rev_min_per_card + 
+                                                   cardsperday*new_min_per_card), 
+                              Observed = obs_time_smoothed[1:nrow(review_data)])
+      if (use_dates) {
+        time_data <- time_data %>% mutate(Day = as.POSIXct(rv$IGNORE_BEFORE + Day))
+      }
       plotdata <- time_data %>% gather(key = "Type", value = "Time", -Day) 
       ggp <- ggplot(plotdata, aes(x=Day, y=Time, color=Type)) + 
         geom_line(lwd = 0.8) + ylab("Time (min)") + 
-        ggtitle(sprintf("Projected Time Commitment (News + Reviews) Over Time (rescale factor = %s)", signif(rescale,2))) + theme_bw() 
+        ggtitle(sprintf("Projected Time Commitment (News + Reviews) Over Time (rescale factor = %s%%)", 
+                        signif(100*rescale-100,2))) + theme_bw() 
+    }
+    if (use_dates) {
+      ggp <- ggp + scale_x_datetime(labels = date_format("%b %Y"), 
+                                    minor_breaks = date_breaks("months"),
+                                    breaks = date_breaks("months")) + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
     }
     ggp
   })
@@ -497,6 +569,8 @@ server <- function(input, output, session) {
   output$img <- renderImage({
     return(list(
       src = "img/instructions.png",
+      width = 330,
+      height = 340,
       contentType = "image/png",
       alt = "Export"
     ))

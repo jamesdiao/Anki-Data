@@ -1,7 +1,7 @@
 ---
-title: "Anki DB Extract and Analysis"
+title: "Analyses and Visualizations for Anki"
 author: "James Diao"
-date: "08 April 2019"
+date: "13 April 2019"
 output: pdf_document
 ---
 
@@ -16,8 +16,10 @@ require(sqldf)
 require(ggplot2)
 require(tidyr)
 require(treemap)
+#COLLECTION_PATH <- "/Users/jamesdiao/Documents/R/Anki-Data/Files/JAD/collection.anki2"
 #COLLECTION_PATH <- "/Users/jamesdiao/Library/Application Support/Anki2/HMS-S2/collection.anki2"
 #COLLECTION_PATH <- "/Users/jamesdiao/Documents/R/Anki-Data/WFC/collection.anki2"
+IGNORE_BEFORE <- as.Date("2019-01-15")
 RM_DECKS <- NULL
 ```
 
@@ -26,10 +28,11 @@ RM_DECKS <- NULL
 ### Connect to the database and extract review information from `revlog`
 con <- dbConnect(RSQLite::SQLite(), dbname=COLLECTION_PATH)
 rev <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS id, CAST(cid AS TEXT) AS cid,
-                  time, type, ease, factor, lastivl FROM revlog')
+                  time, type, ease, factor, ivl, lastivl FROM revlog') 
 cards <- dbGetQuery(con,'SELECT CAST(id AS TEXT) AS cid, 
                          CAST(did AS TEXT) AS did,
-                         reps
+                         reps,
+                         mod
                          FROM cards')
 ```
 
@@ -43,14 +46,19 @@ decks <- data.frame(did = names(decks),
                     stringsAsFactors = FALSE
 )
 cards_w_decks <- merge(cards,decks,by="did")
+### Disconnect from database connection
+dbDisconnect(con)
 ```
 
 
 ```{r}
 #Date is UNIX timestamp in milliseconds, divide by 1000 to get seconds
-rev$revdate <- anydate(as.numeric(rev$id)/1000)
+rev$revdate <- anydate(as.numeric(rev$id)/1000 - 5*3600)
+if (!is.null(IGNORE_BEFORE))
+  rev <- rev %>% filter(revdate >= IGNORE_BEFORE)#-10)
 # Assign deck info to reviews
-rev_w_decks <- merge(rev, cards_w_decks, by="cid")
+rev_w_decks <- merge(rev, cards_w_decks, by="cid", all.x = TRUE)
+#rev_w_decks$moddate <- anydate(as.numeric(rev_w_decks$mod))# -4*3600)
 
 keep <- TRUE
 if (!is.null(RM_DECKS)) {
@@ -60,57 +68,74 @@ if (!is.null(RM_DECKS)) {
 }
 rev_w_decks <- rev_w_decks %>% filter(keep)
 
-rev_w_decks_unique <- rev_w_decks[!duplicated(
-  paste(rev_w_decks$cid, rev_w_decks$type, rev_w_decks$revdate)),]
+new_cards <- rev_w_decks %>% 
+  filter(ivl > 0, lastIvl < 0) %>% 
+  arrange(cid, id) %>% 
+  distinct(cid, .keep_all = TRUE) %>% 
+  group_by(Date=revdate) %>% 
+  summarize(New_Count=n())
 
-all_summary <- sqldf("SELECT revdate AS Date, 
-                     COUNT(*) AS Count, 
-                     SUM(time) AS Time,
-                     type 
-                     FROM rev_w_decks_unique 
-                     GROUP BY revdate, type") %>% 
-                  mutate(Date = anydate(Date), 
-                         Time = Time/60000)
-time_summary <- sqldf("SELECT revdate AS Date, 
-                     COUNT(*) AS Count, 
-                     SUM(time) AS Time,
-                     type 
-                     FROM rev_w_decks 
-                     GROUP BY revdate, type") %>% 
-                  mutate(Date = anydate(Date), 
-                         Time = Time/60000)
-error_summary <- sqldf("SELECT revdate AS Date, 
-                       COUNT(*) AS Count 
-                       FROM rev_w_decks 
-                       WHERE ease==1 AND type==1 
-                       GROUP BY revdate") %>% 
-                  mutate(Date = anydate(Date))
+new_time <- rev_w_decks %>% 
+  filter((type == 0) | (ivl > 0 & lastIvl < 0)) %>% 
+  arrange(cid, id) %>% 
+  #distinct(cid, .keep_all = TRUE) %>% 
+  group_by(Date=revdate) %>% 
+  summarize(New_Time=sum(time/60000))
+
+all_summary <- merge(new_cards, new_time, "Date", all = TRUE)
+
+# Not new 
+rev_summary <- rev_w_decks %>% 
+  filter(type != 0) %>% 
+  arrange(cid, id) %>% 
+  group_by(Date=revdate) %>% 
+  summarize(Rev_Count=n(), Rev_Time=sum(time/60000))
+
+all_summary <- merge(rev_summary, all_summary, "Date", all = TRUE)
+
+error_summary <- rev_w_decks %>% 
+  filter(ease==1) %>% 
+  arrange(cid, id) %>% 
+  group_by(Date=revdate) %>% 
+  summarize(Error_Count=n())
+
+all_summary <- merge(all_summary, error_summary, "Date", all = TRUE)
+
+total_summary <- rev_w_decks %>% 
+  arrange(cid, id) %>% 
+  group_by(Date=revdate) %>% 
+  summarize(Total_Count=n())
+
+all_summary <- merge(all_summary, total_summary, "Date", all = TRUE)
+
+all_summary[,-1] <- sapply(all_summary[,-1], function(col) 
+                      replace(col, is.na(col), 0)
+                    )
+dates <- all_summary$Date
+num_days <- dates %>% range %>% diff %>% as.numeric
+#rev_summary
+#plot(rev_summary$Count, type = 'h')
+#plot(rev(rev(rev_summary$Count)[1:30]), type = 'h')
+#abline(h=100*c(1:4))
+#sum(new_summary$Count)/as.numeric(max(new_summary$Date)-min(new_summary$Date))
+#new_summary %>% plot(type = 'h')
 ```
 
 ## Compute summary statistics
 ```{r}
-new_summary <- all_summary %>% filter(type==0) %>% select(Date, Count) 
-rev_summary <- all_summary %>% filter(type==1) %>% select(Date, Count)
+error_rates <- all_summary$Error_Count/all_summary$Total_Count
+avg_error <- sum(all_summary$Error_Count)/sum(all_summary$Total_Count)
+
+#take non-trailing <4s
+real_news <- nrow(all_summary) - which(diff(rev(all_summary$New_Count < 4))==-1)[1]
+avg_new <- sum(all_summary$New_Count[1:real_news])/real_news
 
 
-new_time <- time_summary %>% filter(type==0) %>% select(Date, Time, Count)
-rev_time <- time_summary %>% filter(type==1) %>% select(Date, Time, Count)
-time_summary <- merge(new_time, rev_time, by="Date", all = TRUE) 
-time_summary[, 2:ncol(time_summary)] <- apply(time_summary[, 2:ncol(time_summary)], 2, 
-                                              function(col) {
-                                                if (class(col)=="numeric") replace(col, is.na(col), 0) 
-                                                else col
-                                              })
-colnames(time_summary) <- c("Date","New_Time","New_Count","Review_Time","Review_Count")
-
-rev_map <- rev_summary$Count %>% setNames(rev_summary$Date)
-error_rates <- error_summary$Count/rev_map[as.character(error_summary$Date)]
-avg_error <- sum(error_summary$Count)/sum(rev_map[as.character(error_summary$Date)])
-
-avg_new <- new_summary$Count %>% mean
-new_min_per_card <- sum(new_time$Time)/sum(new_time$Count)
-avg_rev <- rev_summary$Count %>% mean
-rev_min_per_card <- sum(rev_time$Time)/sum(rev_time$Count)
+new_min_per_card <- sum(all_summary$New_Time[-length(dates)]) / 
+  sum(all_summary$New_Count[-length(dates)])
+avg_rev <- sum(all_summary$Rev_Count[-length(dates)])/(num_days-1)
+rev_min_per_card <- sum(all_summary$Rev_Time[-length(dates)]) / 
+  sum(all_summary$Rev_Count[-length(dates)])
 avg_int <- mean((rev$factor[rev$factor > 0]))/1000
 new_int <- avg_int*log(0.9)/log(1-max(avg_error,0.01))
 ```
@@ -119,10 +144,11 @@ new_int <- avg_int*log(0.9)/log(1-max(avg_error,0.01))
 - Average reviews/day: `r round(avg_rev, 1)`
 - Average errors/review: `r signif(100*avg_error, 2)`%
 - Average interval multiplier: `r round(avg_int, 2)`x
-- Studied cards: `r sum(new_summary$Count)`
+- Studied cards: `r sum(all_summary$New_Count)`
 - Total cards: `r nrow(cards)`
-- Estimated days to completion: `r ceiling(nrow(cards)/avg_new)-nrow(new_summary)`
-- Estimated completion date: `r ceiling(nrow(cards)/avg_new)-nrow(new_summary)+Sys.Date()`
+- Estimated total days to completion: `r ceiling(nrow(cards)/avg_new)`
+- Estimated remaining days to completion: `r ceiling(nrow(cards)/avg_new)-length(dates)`
+- Estimated completion date: `r ceiling(nrow(cards)/avg_new)-length(dates)+Sys.Date()`
 - Suggested new interval (explanation below): `r round(new_int,2)`
 
 Anki suggests targeting a 10% error rate (90% retention) using the following equation: 
@@ -135,7 +161,6 @@ $$ \text{Optimal interval} = (`r round(avg_int, 2)`)\left( \frac{ \log (\text{0.
 \newpage 
 
 ```{r all_treemap}
-
 decks$category <- gsub(":+.*$","",decks$name) %>% trimws
 decks$subcategory <- sub(":+",";;",decks$name)
 decks$subcategory <- sub(".*;;","",decks$subcategory)
@@ -189,14 +214,14 @@ treemap(learned_deck_summary,
 #tsData <- rev_summary$Count %>% ts(frequency = 7)
 #decompose(tsData, type="additive") %>% plot
 
-ggplot(new_summary,aes(x=Date,y=Count)) + 
+ggplot(all_summary,aes(x=Date,y=New_Count)) + 
   geom_bar(stat="identity",fill="darkblue") +
   ggtitle("New Cards Over Time") +
   xlab("Date") +
   ylab("New Cards") +
   geom_hline(yintercept = avg_new, lty = 2)
 
-ggplot(rev_summary,aes(x=Date,y=Count)) + 
+ggplot(all_summary,aes(x=Date,y=Rev_Count)) + 
   geom_bar(stat="identity",fill="darkblue") +
   #geom_smooth(method='auto') + 
   ggtitle("Review Cards Over Time") +
@@ -211,26 +236,21 @@ ggplot(rev_summary,aes(x=Date,y=Count)) +
 #tsData <- rev_summary$Count %>% ts(frequency = 7)
 #decompose(tsData, type="additive") %>% plot
 
-ggplot(new_time,aes(x=Date,y=Time)) + 
+ggplot(all_summary,aes(x=Date,y=New_Time)) + 
   geom_bar(stat="identity",fill="darkblue") +
   ggtitle("Time Spent on New Cards Over Time") +
   xlab("Date") +
   ylab("Time (min)") +
-  geom_hline(yintercept = mean(new_time$Time), lty = 2)
+  geom_hline(yintercept = mean(all_summary$New_Time), lty = 2)
 
-ggplot(rev_time,aes(x=Date,y=Time)) + 
+ggplot(all_summary,aes(x=Date,y=Rev_Time)) + 
   geom_bar(stat="identity",fill="darkblue") +
   #geom_smooth(method='auto') + 
   ggtitle("Time Spent on Review Cards Over Time") +
   xlab("Date") +
   ylab("Time (min)") +
-  geom_hline(yintercept = mean(rev_time$Time), lty = 2)
+  geom_hline(yintercept = mean(all_summary$Rev_Time), lty = 2)
 
-```
-
-```{r}
-### Disconnect from database connection
-dbDisconnect(con)
 ```
 
 ## Simulation Forecasting
@@ -302,9 +322,9 @@ for (i in 1:days) {
 # Round review counts to integers
 reviews <- reviews %>% round(0)
 # Two-part smoothing process to simulate load balancing
-review_data <- data.frame(Day = 1:length(reviews), estimated = reviews)
+review_data <- data.frame(Day = 1:length(reviews), Predicted = reviews)
 smoothed_1 <- reviews[1:4]
-smoothed_2 <- predict(loess(estimated ~ Day, 
+smoothed_2 <- predict(loess(Predicted ~ Day, 
                       data = review_data[5:nrow(review_data),], 
                       span = 0.1))
 smoothed <- c(smoothed_1, smoothed_2)
@@ -315,18 +335,20 @@ Model generated for empirical values: `r sprintf("New cards/day = %s, total card
 
 ```{r ReviewsPlot, fig.height=4}
 # Final data frame
-obs <- rev_summary$Count
-obs_data <- data.frame(Day = 1:length(obs), estimated = obs)
-obs_smoothed <- predict(loess(estimated ~ Day, span = 0.5, data = obs_data))
+obs <- all_summary$Rev_Count
+obs_data <- data.frame(Day = 1:length(obs), Predicted = obs)
+obs_smoothed <- predict(loess(Predicted ~ Day, span = 0.5, data = obs_data))
 
 f <- function(x) {
-  sum((smoothed[1:nrow(rev_summary)]*x - obs_smoothed)^2)
+  min_len <- min(length(smoothed), length(obs_smoothed))
+  sum((smoothed[1:min_len]*x - obs_smoothed[1:min_len])^2)
 }
 rescale <- optimize(f=f, interval = c(0,2))$minimum
 
-all_data <- data.frame(rescale*review_data, 
+all_data <- data.frame(Day = review_data$Day,
+                       Predicted = rescale * review_data$Predicted,
                        #smoothed = rescale*smoothed,
-                       observed = obs_smoothed[1:nrow(review_data)])
+                       Observed = obs_smoothed[1:nrow(review_data)])
 
 plotdata <- all_data %>% gather(key = "Type", value = "Reviews", -Day) 
 ggplot(plotdata, aes(x=Day, y=Reviews, color=Type)) + 
@@ -336,20 +358,23 @@ ggplot(plotdata, aes(x=Day, y=Reviews, color=Type)) +
 Observed counts smoothed using span=0.5; model estimates scaled by `r round(rescale,2)`x.  
 
 ```{r TimePlot, fig.height=4}
-obs_time <- time_summary$New_Time + time_summary$Review_Time
-obs_time_data <- data.frame(Day = 1:length(obs_time), estimated = obs_time)
-obs_time_smoothed <- predict(loess(estimated ~ Day, span = 0.5, data = obs_time_data))
+obs_time <- all_summary$New_Time + all_summary$Rev_Time
+obs_time_data <- data.frame(Day = 1:length(obs_time), Predicted = obs_time)
+obs_time_smoothed <- predict(loess(Predicted ~ Day, span = 0.5, data = obs_time_data))
 
 smoothed_time <- review_data*rev_min_per_card+cardsperday*new_min_per_card
 f <- function(x) {
-  sum((smoothed_time[1:nrow(time_summary), "estimated"]*x - obs_time_smoothed)^2)
+  min_len <- min(nrow(smoothed_time), length(obs_time_smoothed))
+  sum((smoothed_time[1:min_len, "Predicted"]*x -
+       obs_time_smoothed[1:min_len])^2)
 }
 rescale <- optimize(f=f, interval = c(0,2))$minimum
 
-
-time_data <- data.frame(rescale*(review_data*rev_min_per_card+cardsperday*new_min_per_card), 
+time_data <- data.frame(Day = review_data$Day,
+                        Predicted = rescale*(review_data$Predicted*rev_min_per_card + 
+                                             cardsperday*new_min_per_card), 
                         #smoothed = rescale*smoothed,
-                        observed = obs_time_smoothed[1:nrow(review_data)])
+                        Observed = obs_time_smoothed[1:nrow(review_data)])
 
 plotdata <- time_data %>% gather(key = "Type", value = "Time", -Day) 
 ggplot(plotdata, aes(x=Day, y=Time, color=Type)) + 
@@ -373,14 +398,5 @@ colnames(ease_data) <- 1:4
 data.frame(reps=rep_range, ease_data %>% gather("ease","count")) %>% 
   ggplot(aes(fill=ease, y=count, x=reps)) + 
     geom_bar(stat="identity")
-
-interval_range <- 1:30
-forget_data <- sapply(interval_range, function(ivl){
-  #sapply(rep_range, function(rep) { #reps == rep, 
-    responses <- forget %>% filter(lastIvl == ivl) %>% select(ease) %>% unlist
-    mean(responses == 1)
-    #sapply(1:4, function(x) sum(responses==x))
-  #})
-}) %>% unlist %>% plot(xlab = "Last Interval", ylab = "Error")
 ```
 
