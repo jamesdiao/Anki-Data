@@ -20,7 +20,9 @@ pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite","DBI",
 installed <- pkg_list %in% installed.packages()[,"Package"]
 if (!all(installed)) install.packages(pkg_list[!installed])
 sapply(pkg_list, require, character.only = T)
-  
+
+source("helpers.R")
+
 require(anytime)
 require(DBI)
 require(dplyr)
@@ -34,6 +36,7 @@ require(scales)
 require(shiny)
 require(shinyalert)
 require(shinycssloaders)
+require(shinyjs)
 require(sqldf)
 require(tidyr)
 require(treemap)
@@ -53,6 +56,7 @@ options(shiny.maxRequestSize=50*1024^2)
 
 ui <- fluidPage(
   useShinyalert(),
+  useShinyjs(),
   titlePanel("Data Exploration and Visualization Tools for Anki"),
     column(4,
         wellPanel(
@@ -64,9 +68,11 @@ ui <- fluidPage(
           tags$br(),
           conditionalPanel(condition = "output.init",
             tags$br(),
-            downloadButton("report", "Download Report", 
-                           style="color: #fff; background-color: #4b0082"),
-            helpText("Report generation takes 10-20 seconds"),
+            withBusyIndicatorUI(
+              downloadButton("report", "Download Report", 
+                             style="color: #fff; background-color: #4b0082")
+            ),
+            helpText("Report generation takes around 10-20 seconds"),
             h1(),
             checkboxInput("filter",
                           "Open filtering settings",
@@ -811,12 +817,14 @@ server <- function(input, output, session) {
       file.copy("report.Rmd", tempReport, overwrite = TRUE)
       params <- isolate(reactiveValuesToList(rv))
       params$RM_DECKS <- input$rm_decks
-      rmarkdown::render(tempReport, output_file = file,
+      withBusyIndicatorServer("report", 
+          rmarkdown::render(tempReport, output_file = file,
                         params = params,
                         envir = new.env(parent = globalenv())
-      )
+      ))
     }
   )
+
 }
 
 
