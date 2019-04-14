@@ -1,39 +1,52 @@
 # title: "Data Exploration and Visualization Tools for Anki"
 # author: "James Diao"
-# date: "13 April 2019"
+# date: "14 April 2019"
 
 # web app: https://jamesdiao.shinyapps.io/ankidata/
 # rsconnect::deployApp('/Users/jamesdiao/Documents/R/Anki-Data')
 
 ### To-do
 
-# download function for: tables, plots, files
+# pretty tables
 # explanation + math for suggested interval
 # NLP on words
 
 ### Code
 
 # Install and load all required packages
-pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite", "DBI","anytime","scales",
-              "sqldf", "treemap", "plotly","shiny","shinycssloaders","shinyalert")
+pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite","DBI",
+              "anytime","scales","knitr","rmarkdown","sqldf", 
+              "treemap","plotly","shiny","shinycssloaders","shinyalert")
 installed <- pkg_list %in% installed.packages()[,"Package"]
 if (!all(installed)) install.packages(pkg_list[!installed])
 sapply(pkg_list, require, character.only = T)
-
+  
+require(anytime)
+require(DBI)
 require(dplyr)
-require(tidyr)
 require(ggplot2)
+require(knitr)
+require(plotly)
 require(rjson)
 require(RSQLite)
-require(DBI)
-require(anytime)
-require(sqldf)
-require(treemap)
-require(plotly)
+require(markdown)
 require(scales)
 require(shiny)
-require(shinycssloaders)
 require(shinyalert)
+require(shinycssloaders)
+require(sqldf)
+require(tidyr)
+require(treemap)
+
+h_read <- function(timing=0) {
+  if (timing < 1) return("0 minutes")
+  timing <- as.numeric(timing)
+  hours <- floor((timing)/60)
+  minutes <- floor((timing - 60*hours))
+  hour.in <- ifelse(hours == 1, "1 hour, ",ifelse(hours == 0, "", paste(hours,"hours, ")))
+  minute.in <- ifelse(minutes == 1, "1 minute",ifelse(minutes == 0, "", paste(minutes,"minutes")))
+  return(paste0(hour.in, minute.in))
+}
 
 # Maximum upload size
 options(shiny.maxRequestSize=50*1024^2)
@@ -45,25 +58,35 @@ ui <- fluidPage(
         wellPanel(
           fileInput("file1", "Upload 'collection.anki2' file (50 MB limit)",
                     multiple = FALSE),
-          actionButton(inputId = "autofile", label = "Try with Test File", 
+          actionButton(inputId = "autofile", label = "Load Test File (up to 10 sec)", 
                        icon("paper-plane"), 
-                       style="color: #fff; background-color: #337ab7; border-color: #2e6da4"),
-          h1(),
-          selectizeInput("rm_decks", "Decks to exclude:", 
-                         choices = c("File Not Found"), selected = c("File Not Found"), multiple = TRUE),
-          dateInput("ignore_before", "Ignore cards before (defaults to first day):"),
-          h2(),
-          tableOutput("stats_table") %>% withSpinner
+                       style="color: #fff; background-color: #0050a1"),
+          tags$br(),
+          conditionalPanel(condition = "output.init",
+            tags$br(),
+            downloadButton("report", "Generate Report (up to 60 sec)", 
+                           style="color: #fff; background-color: #4b0082"),
+            h1(),
+            checkboxInput("filter",
+                          "Open filtering settings",
+                          value = FALSE),
+            conditionalPanel(condition = "input.filter",
+              selectizeInput("rm_decks", "Decks to exclude:", 
+                             choices = NULL, selected = NULL, multiple = TRUE),
+              dateInput("ignore_before", "Ignore cards before (defaults to first day):", 
+                         value = NULL)
+            )
+          )
         ),
         wellPanel(
-        tags$div(
-          tags$b("Web app:"), tags$a(href="https://jamesdiao.shinyapps.io/anki-data/", 
-                                     "https://jamesdiao.shinyapps.io/anki-data/"),
-          tags$br(),
-          tags$b("Source code:"), tags$a(href="https://github.com/jamesdiao/Anki-Data/", 
-                                         "https://github.com/jamesdiao/anki-data/"),
-          tags$br(),
-          tags$b("Last updated:"), "April 13, 2019"
+          tags$div(
+            tags$b("Web app:"), tags$a(href="https://jamesdiao.shinyapps.io/anki-data/", 
+                                       "https://jamesdiao.shinyapps.io/anki-data/"),
+            tags$br(),
+            tags$b("Source code:"), tags$a(href="https://github.com/jamesdiao/Anki-Data/", 
+                                           "https://github.com/jamesdiao/anki-data/"),
+            tags$br(),
+            tags$b("Last updated:"), "14 April 2019"
           )
         )
     ),
@@ -88,8 +111,16 @@ ui <- fluidPage(
           column(3,tags$br(),
                  imageOutput("img"))
         ),
+        tabPanel("Summary", tags$br(),
+                 tableOutput("stats_table"),
+                 textOutput("stats_text") %>% helpText,
+                 conditionalPanel(
+                   condition = "output.stats_text",
+                   includeMarkdown("equation.md")
+                 )
+        ),
         tabPanel("Card Distribution", h1(), 
-                 radioButtons(inputId = "tm_type", label = "Divisions", inline = TRUE,
+                 radioButtons(inputId = "tm_type", label = "Distribution Splits", inline = TRUE,
                               choices = c("All Categories","Learned/Unlearned")),
                  plotOutput("treemap", height = "500px") %>% withSpinner
                  ),
@@ -101,7 +132,7 @@ ui <- fluidPage(
                  plotOutput("newplot", height = "250px") %>% withSpinner,
                  plotOutput("revplot", height = "250px") %>% withSpinner
                  ),
-        tabPanel("Projection (beta)", h1(), 
+        tabPanel("Workload Projection (beta)", h1(), 
                  #h5("Predictive model generated from empirical values"),
                  fluidRow(
                    column(4, radioButtons(inputId = "pr_output", 
@@ -116,12 +147,12 @@ ui <- fluidPage(
                    )
                  ),
                  fluidRow(
-                   h2(),
+                   tags$br(),
                    plotOutput("projection") %>% withSpinner
                  )
                    
         ),     
-        tabPanel("Projection Simulator (beta)", 
+        tabPanel("Simulator (beta)", 
           tags$br(),
           column(3,
                  radioButtons("format", inline = TRUE,
@@ -130,13 +161,13 @@ ui <- fluidPage(
                               selected = "Cards"
                  ),
                  sliderInput("cardsperday",
-                             "Cards Per Day",
+                             "New Cards/Day",
                              min = 10,
                              max = 200,
                              value = 50, 
                              step = 5),
                  sliderInput("cutoff",
-                             "Total Cards in Deck",
+                             "Total Cards",
                              min = 1000,
                              max = 30000,
                              value = 28000, 
@@ -144,13 +175,13 @@ ui <- fluidPage(
                  conditionalPanel(
                    condition = "input.format == 'Time'",
                    sliderInput("revperminute",
-                               "Reviews per Minute:",
+                               "Reviews/Minute:",
                                min = 1,
                                max = 20,
                                value = 5, 
                                step = 1),
                    sliderInput("newperminute",
-                               "New Cards per Minute:",
+                               "New Cards/Minute:",
                                min = 0.1,
                                max = 20,
                                value = 2, 
@@ -207,6 +238,11 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   
   rv <- reactiveValues(IGNORE_BEFORE = NULL)
+  
+  output$init <- reactive({
+    !is.null(rv$COLLECTION_PATH)
+  })
+  outputOptions(output, "init", suspendWhenHidden = FALSE)
   
   observeEvent(input$autofile, {
     rv$COLLECTION_PATH <- "Files/JAD/collection.anki2"
@@ -281,9 +317,9 @@ server <- function(input, output, session) {
                            CAST(did AS TEXT) AS did,
                            reps, mod
                            FROM cards')
-    rv$deckinfo <- dbGetQuery(con,'SELECT decks FROM col') %>% as.character %>% fromJSON
-    rv$decks <- data.frame(did = names(rv$deckinfo), 
-                           name = sapply(rv$deckinfo, function(d) d$name) %>% setNames(NULL), 
+    deckinfo <- dbGetQuery(con,'SELECT decks FROM col') %>% as.character %>% fromJSON
+    rv$decks <- data.frame(did = names(deckinfo), 
+                           name = sapply(deckinfo, function(d) d$name) %>% setNames(NULL), 
                            stringsAsFactors = FALSE
                            )
     dbDisconnect(con)
@@ -297,13 +333,13 @@ server <- function(input, output, session) {
     decks_cat$subcategory <- sub(".*;;","",decks_cat$subcategory)
     decks_cat$subcategory <- gsub(":.*$","",decks_cat$subcategory) %>% trimws
     rv$decks_cat <- decks_cat
-    rv$cards_w_decks <- merge(rv$cards, rv$decks,by="did")
+    cards_w_decks <- merge(rv$cards, rv$decks,by="did")
     if (input$ignore_before != Sys.Date()){
       rv$IGNORE_BEFORE <- input$ignore_before
     }
     rv$rev <- rv$rev %>% filter(revdate >= rv$IGNORE_BEFORE)#-10)
     # Assign deck info to reviews
-    rev_w_decks <- merge(rv$rev, rv$cards_w_decks, by="cid", all.x = TRUE)
+    rev_w_decks <- merge(rv$rev, cards_w_decks, by="cid", all.x = TRUE)
     
     keep <- rep(TRUE, nrow(rev_w_decks))
     if (!is.null(RM_DECKS)) {
@@ -314,46 +350,46 @@ server <- function(input, output, session) {
     rev_w_decks <- rev_w_decks %>% filter(keep)
     rv$rev_w_decks <- rev_w_decks
     
-    rv$new_cards <- rev_w_decks %>% 
+    new_cards <- rev_w_decks %>% 
       filter(ivl > 0, lastIvl < 0) %>% 
       arrange(cid, id) %>% 
       distinct(cid, .keep_all = TRUE) %>% 
       group_by(Date=revdate) %>% 
       summarize(New_Count=n())
-    rv$new_time <- rev_w_decks %>% 
+    new_time <- rev_w_decks %>% 
       filter((type == 0) | (ivl > 0 & lastIvl < 0)) %>% 
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(New_Time=sum(time/60000))
-    rv$all_summary <- merge(rv$new_cards, rv$new_time, "Date", all = TRUE)
+    rv$all_summary <- merge(new_cards, new_time, "Date", all = TRUE)
     
     # Not new 
-    rv$rev_summary <- rev_w_decks %>% 
+    rev_summary <- rev_w_decks %>% 
       filter(type != 0) %>% 
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(Rev_Count=n(), Rev_Time=sum(time/60000))
-    rv$all_summary <- merge(rv$rev_summary, rv$all_summary, "Date", all = TRUE)
+    rv$all_summary <- merge(rev_summary, rv$all_summary, "Date", all = TRUE)
     
-    rv$error_summary <- rev_w_decks %>% 
+    error_summary <- rev_w_decks %>% 
       filter(ease==1) %>% 
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(Error_Count=n())
-    rv$all_summary <- merge(rv$all_summary, rv$error_summary, "Date", all = TRUE)
+    rv$all_summary <- merge(rv$all_summary, error_summary, "Date", all = TRUE)
     
-    rv$total_summary <- rev_w_decks %>% 
+    total_summary <- rev_w_decks %>% 
       arrange(cid, id) %>% 
       group_by(Date=revdate) %>% 
       summarize(Total_Count=n())
-    rv$all_summary <- merge(rv$all_summary, rv$total_summary, "Date", all = TRUE)
+    rv$all_summary <- merge(rv$all_summary, total_summary, "Date", all = TRUE)
     rv$all_summary[,-1] <- sapply(rv$all_summary[,-1], function(col) 
       replace(col, is.na(col), 0)
     )
     
     rv$dates <- rv$all_summary$Date
     num_days <- rv$dates %>% range %>% diff %>% as.numeric
-    rv$error_rates <- rv$all_summary$Error_Count/rv$all_summary$Total_Count
+    #rv$error_rates <- rv$all_summary$Error_Count/rv$all_summary$Total_Count
     rv$avg_error <- sum(rv$all_summary$Error_Count)/sum(rv$all_summary$Total_Count)
     #take non-trailing <4s
     real_news <- nrow(rv$all_summary) - which(diff(rev(rv$all_summary$New_Count < 4))==-1)[1]
@@ -370,6 +406,7 @@ server <- function(input, output, session) {
     rv$totaldaystocompletion <- ceiling(nrow(rv$cards)/rv$avg_new)
     rv$daystocompletion <- rv$totaldaystocompletion-num_days
     rv$completiondate <- ceiling(nrow(rv$cards)/rv$avg_new)-num_days+Sys.Date()
+    rv$num_days <- num_days
     
     cards_w_categories <- merge(rv$cards,rv$decks_cat,by="did") 
     keep <- TRUE
@@ -385,25 +422,34 @@ server <- function(input, output, session) {
     colnames = TRUE, rownames = FALSE, {
     req(rv$COLLECTION_PATH)
     tab <- data.frame(
-      total_cards = nrow(rv$cards),
-      avg_new = rv$avg_new %>% round(1),
-      avg_rev = rv$avg_rev %>% round(1),
+      total_cards = sprintf("%s / %s", 
+                            sum(rv$all_summary$New_Count),
+                            nrow(rv$cards)
+      ),
+      total_time = sum(rv$all_summary$New_Time + rv$all_summary$Rev_Time) %>% h_read,
+      avg_timeperday = mean(rv$all_summary$New_Time + rv$all_summary$Rev_Time) %>% h_read,
+      avg_new_rev = sprintf("%s / %s", 
+                            rv$avg_new %>% round(1),
+                            rv$avg_rev %>% round(1)
+      ),
       avg_error = sprintf("%s%%", 100*rv$avg_error %>% signif(3)),
-      #avg_int = sprintf("%sx", rv$avg_int %>% round(2)),
-      #new_int = sprintf("%sx", rv$new_int %>% round(2)),
-      completiondate = rv$completiondate %>% format("%b %d, %Y"),
-      daystocompletion = sprintf("%s/%s", 
+      avg_new_int = sprintf("%sx / %sx*", 
+                            rv$avg_int %>% round(2),
+                            rv$new_int %>% round(2)
+      ),
+      completiondate = rv$completiondate %>% format("%d %b %Y"),
+      daystocompletion = sprintf("%s / %s", 
                                  rv$daystocompletion %>% round(1), 
                                  rv$totaldaystocompletion %>% round(1)
-                                 )
+      )
     ) %>% t
     
-    data.frame(c("Total Cards",
-                 "Average New Cards/Day",
-                 "Average Review Cards/Day",
+    data.frame(c("Cards in Deck (Studied/Total)",
+                 "Total Time Spent",
+                 "Average Time/Day",
+                 "Average Cards/Day (New/Review)",
                  "Average Error Rate",
-                 #"Average Interval",
-                 #"Suggested Base Interval (targeting 90% error)", 
+                 "Base Interval (Average/Suggested*)", 
                  "Estimated Completion Date",
                  "Days to Completion (Remaining/Total)"),
                tab
@@ -412,10 +458,19 @@ server <- function(input, output, session) {
     return(tab)
   })
   
+  output$stats_text <- renderText({
+    req(rv$new_int)
+    sprintf("*The Anki manual suggests targeting a 10%% error rate 
+             (90%% retention). The suggested value (%sx) 
+              was computed as:",
+             rv$new_int %>% round(2)
+            )
+  })
+    
   output$treemap <- renderPlot({
     req(rv$COLLECTION_PATH)
     cards_w_categories <- rv$cards_w_categories
-    if (input$tm_type == "All categories") {
+    if (input$tm_type == "All Categories") {
       deck_summary <- sqldf("SELECT category, subcategory, count(*) AS n_cards 
                              FROM cards_w_categories 
                              GROUP BY category, subcategory") 
@@ -747,7 +802,22 @@ server <- function(input, output, session) {
     plot 
     
   })
+  
+  output$report <- downloadHandler(
+    filename = "report.pdf",
+    content = function(file) {
+      tempReport <- file.path(tempdir(), "report.Rmd")
+      file.copy("report.Rmd", tempReport, overwrite = TRUE)
+      params <- isolate(reactiveValuesToList(rv))
+      params$RM_DECKS <- input$rm_decks
+      rmarkdown::render(tempReport, output_file = file,
+                        params = params,
+                        envir = new.env(parent = globalenv())
+      )
+    }
+  )
 }
+
 
 # Run the app ----
 shinyApp(ui, server)

@@ -1,0 +1,294 @@
+---
+title: "Anki Analysis Report"
+date: "13 April 2019"
+output: pdf_document
+params:
+  all_summary: NA
+  avg_error: NA
+  avg_int: NA
+  avg_new: NA
+  avg_rev: NA
+  cards: NA
+  cards_w_categories: NA
+  COLLECTION_PATH: NA
+  completiondate: NA
+  dates: NA
+  daystocompletion: NA
+  deckinfo: NA
+  decks: NA
+  decks_cat: NA
+  IGNORE_BEFORE: NA
+  new_cards: NA
+  new_int: NA
+  new_min_per_card: NA
+  new_time: NA
+  num_days: NA
+  rev: NA
+  rev_min_per_card: NA
+  rev_w_decks: NA
+  RM_DECKS: NA
+  tab: NA
+  totaldaystocompletion: NA
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.height = 4.3)
+attach(params)
+h_read <- function(timing=0) {
+  if (timing < 1) return("0 minutes")
+  timing <- as.numeric(timing)
+  hours <- floor((timing)/60)
+  minutes <- floor((timing - 60*hours))
+  hour.in <- ifelse(hours == 1, "1 hour, ",ifelse(hours == 0, "", paste(hours,"hours, ")))
+  minute.in <- ifelse(minutes == 1, "1 minute",ifelse(minutes == 0, "", paste(minutes,"minutes")))
+  return(paste0(hour.in, minute.in))
+}
+```
+
+## Compute summary statistics
+```{r}
+tab <- data.frame(
+  total_cards = sprintf("%s / %s", 
+                        sum(all_summary$New_Count),
+                        nrow(cards)
+  ),
+  total_time = sum(all_summary$New_Time + all_summary$Rev_Time) %>% h_read,
+  avg_timeperday = mean(all_summary$New_Time + all_summary$Rev_Time) %>% h_read,
+  avg_new_rev = sprintf("%s / %s", 
+                        avg_new %>% round(1),
+                        avg_rev %>% round(1)
+  ),
+  avg_error = sprintf("%s%%", 100*avg_error %>% signif(3)),
+  avg_new_int = sprintf("%sx / %sx*", 
+                        avg_int %>% round(2),
+                        new_int %>% round(2)
+  ),
+  completiondate = completiondate %>% format("%b %d, %Y"),
+  daystocompletion = sprintf("%s / %s", 
+                             daystocompletion %>% round(1), 
+                             totaldaystocompletion %>% round(1)
+  )
+) %>% t
+
+data.frame(c("Cards in Deck (Studied/Total)",
+             "Total Time Spent",
+             "Average Time/Day",
+             "Average Cards/Day (New/Review)",
+             "Average Error Rate",
+             "Base Interval (Average/Suggested*)", 
+             "Estimated Completion Date",
+             "Days to Completion (Remaining/Total)"),
+           tab
+) -> tab
+colnames(tab) <- NULL #c("Summary Table","")
+rownames(tab) <- NULL
+kable(tab)
+```
+
+*Anki suggests targeting a 10% error rate (90% retention) using the following equation: 
+
+$$ \text{Optimal interval} = \text{Current interval} \times \frac{ \log (\text{desired retention \%}) }{\log (\text{current retention \%})} $$
+
+Using the values from above, we get: 
+$$ \text{Optimal interval} = `r round(avg_int, 2)` \times \frac{ \log (\text{0.900}) }{\log (\text{`r round(1-max(avg_error,0.01),3)`})} = `r round(new_int,2)` $$
+
+
+\newpage 
+
+```{r all_treemap}
+all_deck_summary <- sqldf("SELECT category, subcategory, count(*) AS n_cards 
+                      FROM cards_w_categories 
+                      GROUP BY category, subcategory")
+treemap(all_deck_summary,
+        index=c("category","subcategory"),
+        vSize="n_cards",
+        type="index",
+        palette = "Set2",
+        title="Card Distribution by CATEGORY")
+```
+
+  
+  
+
+```{r learned_treemap}
+learned_deck_summary <- sqldf("SELECT category, subcategory, count(*) AS n_cards 
+                      FROM cards_w_categories 
+                      WHERE reps > 0
+                      GROUP BY category, subcategory")
+learned_deck_summary <- rbind(learned_deck_summary, 
+                              data.frame(category="Unlearned", 
+                                         subcategory="Unlearned", 
+                                         n_cards = nrow(cards) - sum(learned_deck_summary$n_cards)
+                                        )
+                              )
+treemap(learned_deck_summary,
+        index=c("category","subcategory"),
+        vSize="n_cards",
+        type="index",
+        palette = "Set2",
+        title="Card Distribution by LEARNED/UNLEARNED")
+```
+
+## Reviews counts 
+```{r, fig.height = 2.1}
+#tsData <- rev_summary$Count %>% ts(frequency = 7)
+#decompose(tsData, type="additive") %>% plot
+ggplot(all_summary,aes(x=Date,y=New_Count)) + 
+  geom_bar(stat="identity",fill="darkgreen") +
+  ggtitle("New Cards Over Time") +
+  xlab("Date") +
+  ylab("New Cards") +
+  geom_hline(yintercept = avg_new, lty = 2)
+
+ggplot(all_summary,aes(x=Date,y=Rev_Count)) + 
+  geom_bar(stat="identity",fill="darkblue") +
+  #geom_smooth(method='auto') + 
+  ggtitle("Review Cards Over Time") +
+  xlab("Date") +
+  ylab("Review Cards") +
+  geom_hline(yintercept = avg_rev, lty = 2)
+```
+
+## Time Commitment
+```{r, fig.height = 2.1}
+ggplot(all_summary,aes(x=Date,y=New_Time)) + 
+  geom_bar(stat="identity",fill="darkgreen") +
+  ggtitle("Time Spent on New Cards Over Time") +
+  xlab("Date") +
+  ylab("Time (min)") +
+  geom_hline(yintercept = mean(all_summary$New_Time), lty = 2)
+
+ggplot(all_summary,aes(x=Date,y=Rev_Time)) + 
+  geom_bar(stat="identity",fill="darkblue") +
+  #geom_smooth(method='auto') + 
+  ggtitle("Time Spent on Review Cards Over Time") +
+  xlab("Date") +
+  ylab("Time (min)") +
+  geom_hline(yintercept = mean(all_summary$Rev_Time), lty = 2)
+
+```
+
+## Simulation Forecasting
+```{r init}
+multiplier <- avg_int
+cardsperday <- avg_new
+cutoff <- nrow(cards)
+days <- cutoff/cardsperday
+rlen <- 2*days
+forget <- avg_error
+  
+terminal_interval <- 9999
+added_terms = 0
+max_pwr <- floor(log(terminal_interval, base = multiplier))
+intervals <- ceiling(multiplier^(0:max_pwr)) #c(1, 3, 7, 16, 40, 98)
+if (rlen > terminal_interval) 
+  added_terms <- floor((rlen-sum(intervals))/terminal_interval)
+# Cumulative sum of interval gaps (1, 4, 11, ...)
+csintervals <- c(intervals, rep(terminal_interval, added_terms)) %>% cumsum
+# Add even-odd jitter to the cumulative interval after some number (keep)
+# to stabilize stacking effects
+keep <- 5
+n_csint <- length(csintervals)
+csintervals[keep:n_csint] <- csintervals[keep:n_csint] + 
+                             rep(c(0,1),length.out=n_csint-keep+1)
+# Scaling factor for adds
+scaling <- 1 # 1+ forget*(sum(days > csintervals)-2)
+# Power series of the forget decay factor (e.g., 1.0, 0.90, 0.81, ...)
+decay_0 <- (1-forget)^(0:length(csintervals))
+
+# Empty vector for number of reviews
+reviews <- rep(0, rlen)
+
+for (i in 1:days) {
+  # `range` defines the index of consistently correct cards (2, 5, 12, ...)
+  range <- i + csintervals
+  # Make sure `range` fits inside the `reviews` vector
+  range <- range[range <= rlen]
+  # Make sure `decay` is the same size as `range`
+  decay <- (1-forget)^(0:(length(range)-1))
+  # Add reviews from "perfectly correct" cards initially added on day `i`
+  # graded_scaling <- (1-(days-cut_csint[i]) / days) * (scaling-1) + 1
+  reviews[range] <- reviews[range] + cardsperday * decay * scaling
+  # For each added day (j), add back the series of incorrect cards. 
+  # Assume that none of them are wrong more than twice.
+  
+  for (j in 1:(length(range))) {
+    # `j_range` is the indexes of the series of incorrect cards to add back for each `j`
+    j_range <- range - 1 + range[j]
+    # Make sure `j_range` fits into the `reviews` vector
+    j_range <- j_range[j_range <= rlen]
+    if (length(j_range) == 0) break
+    # Make sure `decay` is the same size as `range`
+    j_decay <- (1-forget)^((j-1):(length(j_range)+j-2))
+    # Add back the series of incorrect cards (2nd term = # of incorrect cards). 
+    reviews[j_range] <- reviews[j_range] + forget*cardsperday*j_decay*scaling 
+  }
+  
+}
+```
+
+```{r Analysis}
+# Round review counts to integers
+reviews <- reviews %>% round(0)
+# Two-part smoothing process to simulate load balancing
+review_data <- data.frame(Day = 1:length(reviews), Predicted = reviews)
+smoothed_1 <- reviews[1:4]
+smoothed_2 <- predict(loess(Predicted ~ Day, 
+                      data = review_data[5:nrow(review_data),], 
+                      span = 0.1))
+smoothed <- c(smoothed_1, smoothed_2)
+```
+
+
+Model generated for empirical values: `r sprintf("New cards/day = %s, total cards = %s, error rate = %s", round(cardsperday,1), cutoff, signif(forget,2))` 
+
+```{r ReviewsPlot, fig.height=4}
+# Final data frame
+obs <- all_summary$Rev_Count
+obs_data <- data.frame(Day = 1:length(obs), Predicted = obs)
+obs_smoothed <- predict(loess(Predicted ~ Day, span = 0.5, data = obs_data))
+
+f <- function(x) {
+  min_len <- min(length(smoothed), length(obs_smoothed))
+  sum((smoothed[1:min_len]*x - obs_smoothed[1:min_len])^2)
+}
+rescale <- optimize(f=f, interval = c(0,2))$minimum
+
+all_data <- data.frame(Day = review_data$Day,
+                       Predicted = rescale * review_data$Predicted,
+                       #smoothed = rescale*smoothed,
+                       Observed = obs_smoothed[1:nrow(review_data)])
+
+plotdata <- all_data %>% gather(key = "Type", value = "Reviews", -Day) 
+ggplot(plotdata, aes(x=Day, y=Reviews, color=Type)) + 
+  geom_line(lwd = 0.8) + ggtitle("Review Counts Over Time") + theme_bw()
+```
+
+Observed counts smoothed using span=0.5; model estimates scaled by `r round(rescale,2)`x.  
+
+```{r TimePlot, fig.height=4}
+obs_time <- all_summary$New_Time + all_summary$Rev_Time
+obs_time_data <- data.frame(Day = 1:length(obs_time), Predicted = obs_time)
+obs_time_smoothed <- predict(loess(Predicted ~ Day, span = 0.5, data = obs_time_data))
+
+smoothed_time <- review_data*rev_min_per_card+cardsperday*new_min_per_card
+f <- function(x) {
+  min_len <- min(nrow(smoothed_time), length(obs_time_smoothed))
+  sum((smoothed_time[1:min_len, "Predicted"]*x -
+       obs_time_smoothed[1:min_len])^2)
+}
+rescale <- optimize(f=f, interval = c(0,2))$minimum
+
+time_data <- data.frame(Day = review_data$Day,
+                        Predicted = rescale*(review_data$Predicted*rev_min_per_card + 
+                                             cardsperday*new_min_per_card), 
+                        #smoothed = rescale*smoothed,
+                        Observed = obs_time_smoothed[1:nrow(review_data)])
+
+plotdata <- time_data %>% gather(key = "Type", value = "Time", -Day) 
+ggplot(plotdata, aes(x=Day, y=Time, color=Type)) + 
+  geom_line(lwd = 0.8) + ylab("Time (min)") + 
+  ggtitle("Time Spent Over Time") + theme_bw() #+ 
+```
+
+Observed counts smoothed using span=0.5; model estimates scaled by `r round(rescale,2)`x.
