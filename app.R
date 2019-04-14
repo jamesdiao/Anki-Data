@@ -2,7 +2,7 @@
 # author: "James Diao"
 # date: "14 April 2019"
 
-# web app: https://jamesdiao.shinyapps.io/ankidata/
+# web app: https://jamesdiao.shinyapps.io/anki-data/
 # rsconnect::deployApp('/Users/jamesdiao/Documents/R/Anki-Data')
 
 ### To-do
@@ -58,14 +58,15 @@ ui <- fluidPage(
         wellPanel(
           fileInput("file1", "Upload 'collection.anki2' file (50 MB limit)",
                     multiple = FALSE),
-          actionButton(inputId = "autofile", label = "Load Test File (up to 10 sec)", 
+          actionButton(inputId = "autofile", label = "Load Test File", 
                        icon("paper-plane"), 
                        style="color: #fff; background-color: #0050a1"),
           tags$br(),
           conditionalPanel(condition = "output.init",
             tags$br(),
-            downloadButton("report", "Generate Report (up to 60 sec)", 
+            downloadButton("report", "Download Report", 
                            style="color: #fff; background-color: #4b0082"),
+            helpText("Report generation takes 10-20 seconds"),
             h1(),
             checkboxInput("filter",
                           "Open filtering settings",
@@ -99,7 +100,7 @@ ui <- fluidPage(
              tags$br(),
              tags$b('Instructions: '), tags$br(),
              'Upload a ',tags$code('collection.anki2'), 'file (details below) or hit ',
-             '"Try with Test File" to explore the app using preloaded sample data.',
+             '"Try with Test File" to explore the app using preloaded data.',
              tags$br(), tags$br(),
              tags$b('Details: '), tags$br(), 
              'This app extracts scheduling data from a',tags$code('collection.anki2'),

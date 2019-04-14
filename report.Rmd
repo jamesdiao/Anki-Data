@@ -1,6 +1,6 @@
 ---
 title: "Anki Analysis Report"
-date: "13 April 2019"
+date: "`r format(Sys.time(), '%d %b %Y')`"
 output: pdf_document
 params:
   all_summary: NA
