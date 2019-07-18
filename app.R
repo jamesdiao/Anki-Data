@@ -147,6 +147,10 @@ ui <- fluidPage(
             tags$br(),
             'Warning: predicted values may be very wrong with major 
              deviations from Anki scheduling or changes to default Anki settings', 
+            tags$br(), 
+            'Methodology available at: ', 
+            tags$a(href="http://jamesdiao.com/medical_school/projects/anki-reviews", 
+                   "http://jamesdiao.com/medical_school/projects/anki-reviews"), 
             tags$br()
           ),
           tags$br(),
@@ -226,33 +230,32 @@ ui <- fluidPage(
           column(9, 
                  plotlyOutput("simulator", height = "400px")
                  )
-        ), 
-        
-        tabPanel("Projection (beta)", h1(), 
-                 tags$div(
-                   tags$b('Predictive model generated from empirical values'), 
-                   tags$br(),
-                   'Warning: predicted values may be very wrong with major 
-                    deviations from Anki scheduling or changes to default Anki settings', 
-                   tags$br(), tags$br()
-                 ),
-                 fluidRow(
-                   column(4, radioButtons(inputId = "pr_output", 
-                                          label = "Review Count vs. Time", 
-                                          inline = FALSE,
-                                          choices = c("Review Card Count","Review Time"))
-                   ), 
-                   column(6,
-                          sliderInput(inputId = "span", 
-                                      label = "Smoothing factor", 
-                                      min = 0.1, max=1, value = 0.5, step = 0.1)
-                   )
-                 ),
-                 fluidRow(
-                   tags$br(),
-                   plotOutput("projection") %>% withSpinner
-                 )
-        )
+        )#,
+        #tabPanel("Projection (beta)", h1(), 
+        #         tags$div(
+        #           tags$b('Predictive model generated from empirical values'), 
+        #           tags$br(),
+        #           'Warning: predicted values may be very wrong with insufficient data, major 
+        #            deviations from Anki scheduling, or changes to default Anki settings', 
+        #           tags$br(), tags$br()
+        #         ),
+        #         fluidRow(
+        #           column(4, radioButtons(inputId = "pr_output", 
+        #                                  label = "Review Count vs. Time", 
+        #                                  inline = FALSE,
+        #                                  choices = c("Review Card Count","Review Time"))
+        #           ), 
+        #           column(6,
+        #                  sliderInput(inputId = "span", 
+        #                              label = "Smoothing factor", 
+        #                              min = 0.1, max=1, value = 0.5, step = 0.1)
+        #           )
+        #         ),
+        #         fluidRow(
+        #           tags$br(),
+        #           plotOutput("projection") %>% withSpinner
+        #         )
+        #)
       )
     )
 )
