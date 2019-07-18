@@ -4,6 +4,7 @@
 
 # web app: https://jamesdiao.shinyapps.io/anki-data/
 # rsconnect::deployApp('/Users/jamesdiao/Documents/R/Anki-Data')
+# rsconnect::showLogs(appPath = '/Users/jamesdiao/Documents/R/Anki-Data', streaming = TRUE)
 
 ### To-do
 
@@ -14,12 +15,12 @@
 ### Code
 
 # Install and load all required packages
-pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite","DBI",
-              "anytime","scales","knitr","rmarkdown","sqldf", 
-              "treemap","plotly","shiny","shinycssloaders","shinyalert")
-installed <- pkg_list %in% installed.packages()[,"Package"]
-if (!all(installed)) install.packages(pkg_list[!installed])
-sapply(pkg_list, require, character.only = T)
+#pkg_list <- c("dplyr","tidyr","ggplot2","rjson","RSQLite","DBI",
+#              "anytime","scales","knitr","rmarkdown","sqldf", 
+#              "treemap","plotly","shiny","shinycssloaders","shinyalert")
+#installed <- pkg_list %in% installed.packages()[,"Package"]
+#if (!all(installed)) install.packages(pkg_list[!installed])
+#sapply(pkg_list, require, character.only = T)
 
 source("helpers.R")
 
@@ -52,7 +53,7 @@ h_read <- function(timing=0) {
 }
 
 # Maximum upload size
-options(shiny.maxRequestSize=50*1024^2)
+options(shiny.maxRequestSize=100*1024^2)
 
 ui <- fluidPage(
   useShinyalert(),
@@ -60,7 +61,7 @@ ui <- fluidPage(
   titlePanel("Data Exploration and Visualization Tools for Anki"),
     column(4,
         wellPanel(
-          fileInput("file1", "Upload 'collection.anki2' file (50 MB limit)",
+          fileInput("file1", "Upload 'collection.anki2' file (100 MB limit)",
                     multiple = FALSE),
           actionButton(inputId = "autofile", label = "Load Test File", 
                        icon("paper-plane"), 
@@ -122,8 +123,8 @@ ui <- fluidPage(
                  tableOutput("stats_table"),
                  textOutput("stats_text") %>% helpText,
                  conditionalPanel(
-                   condition = "output.stats_text",
-                   includeMarkdown("equation.md")
+                    condition = "output.stats_text",
+                    includeMarkdown("equation.md")
                  )
         ),
         tabPanel("Card Distribution", h1(), 
@@ -139,27 +140,15 @@ ui <- fluidPage(
                  plotOutput("newplot", height = "250px") %>% withSpinner,
                  plotOutput("revplot", height = "250px") %>% withSpinner
                  ),
-        tabPanel("Workload Projection (beta)", h1(), 
-                 #h5("Predictive model generated from empirical values"),
-                 fluidRow(
-                   column(4, radioButtons(inputId = "pr_output", 
-                                          label = "Review Count vs. Time", 
-                                          inline = FALSE,
-                                          choices = c("Review Card Count","Review Time"))
-                   ), 
-                   column(6,
-                          sliderInput(inputId = "span", 
-                                      label = "Smoothing factor", 
-                                      min = 0.1, max=1, value = 0.5, step = 0.1)
-                   )
-                 ),
-                 fluidRow(
-                   tags$br(),
-                   plotOutput("projection") %>% withSpinner
-                 )
-                   
-        ),     
         tabPanel("Simulator (beta)", 
+          tags$div(
+            tags$br(),
+            tags$b('Predictive model generated from specified values'), 
+            tags$br(),
+            'Warning: predicted values may be very wrong with major 
+             deviations from Anki scheduling or changes to default Anki settings', 
+            tags$br()
+          ),
           tags$br(),
           column(3,
                  radioButtons("format", inline = TRUE,
@@ -237,6 +226,32 @@ ui <- fluidPage(
           column(9, 
                  plotlyOutput("simulator", height = "400px")
                  )
+        ), 
+        
+        tabPanel("Projection (beta)", h1(), 
+                 tags$div(
+                   tags$b('Predictive model generated from empirical values'), 
+                   tags$br(),
+                   'Warning: predicted values may be very wrong with major 
+                    deviations from Anki scheduling or changes to default Anki settings', 
+                   tags$br(), tags$br()
+                 ),
+                 fluidRow(
+                   column(4, radioButtons(inputId = "pr_output", 
+                                          label = "Review Count vs. Time", 
+                                          inline = FALSE,
+                                          choices = c("Review Card Count","Review Time"))
+                   ), 
+                   column(6,
+                          sliderInput(inputId = "span", 
+                                      label = "Smoothing factor", 
+                                      min = 0.1, max=1, value = 0.5, step = 0.1)
+                   )
+                 ),
+                 fluidRow(
+                   tags$br(),
+                   plotOutput("projection") %>% withSpinner
+                 )
         )
       )
     )
@@ -286,10 +301,10 @@ server <- function(input, output, session) {
              rv$decks_cat$subcategory
            ))
          )
+      shinyalert("Success!", 
+                 'File successfully loaded. Browse the tab panels to explore the app!', 
+                 type = "success", timer = 6000)
     }
-    shinyalert("Success!", 
-               'File successfully loaded. Browse the tab panels to explore the app!', 
-               type = "success", timer = 6000)
   })
   
   observeEvent(input$rm_decks, {
@@ -467,10 +482,9 @@ server <- function(input, output, session) {
   
   output$stats_text <- renderText({
     req(rv$new_int)
-    sprintf("*The Anki manual suggests targeting a 10%% error rate 
-             (90%% retention). The suggested value (%sx) 
-              was computed as:",
-             rv$new_int %>% round(2)
+    sprintf("*The Anki manual suggests targeting a 10%% error rate (90%% retention)."
+              #The suggested value (%sx)  was computed as:",
+             #rv$new_int %>% round(2)
             )
   })
     
@@ -821,7 +835,8 @@ server <- function(input, output, session) {
           rmarkdown::render(tempReport, output_file = file,
                         params = params,
                         envir = new.env(parent = globalenv())
-      ))
+          )
+      )
     }
   )
 
